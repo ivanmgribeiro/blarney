@@ -5,6 +5,7 @@ module Pipeline where
 import Blarney
 import Blarney.RAM
 import Blarney.BitScan
+import Blarney.Stream
 
 -- Instructions
 type Instr = Bit 32
@@ -47,11 +48,16 @@ data State =
   }
 
 -- Pipeline
-makeCPUPipeline :: Bool -> Config -> Module ()
-makeCPUPipeline sim c = do
+-- makeCPUPipeline :: Bool -> Config -> Module ()
+makeCPUPipeline :: Bool -> Config -> Stream (Bit 32) -> Module (Wire(Bit 1))
+makeCPUPipeline sim c dii_in = do
   -- Instruction memory
   let ext = if sim then ".hex" else ".mif"
   instrMem :: RAM InstrAddr Instr <- makeRAMInit ("prog" ++ ext)
+
+  -- deal with DDII
+  -- TODO rewrite this?
+  -- let instrData = instrMem.out
 
   -- Two block RAMs allows two operands to be read,
   -- and one result to be written, on every cycle
@@ -97,7 +103,14 @@ makeCPUPipeline sim c = do
   go3 :: Reg (Bit 1) <- makeDReg 0
   go4 :: Reg (Bit 1) <- makeDReg 0
 
+  -- TODO changed, rename this later
+  retval :: Wire (Bit 1) <- makeWire 0
+
   always do
+    -- TODO remove?
+    let instrData = dii_in.peek
+    dii_in.consume
+
     -- Stage 0: Instruction Fetch
     -- ==========================
 
@@ -122,11 +135,11 @@ makeCPUPipeline sim c = do
         go2 <== 1
 
     -- Fetch operands
-    load regFileA (srcA c (instrMem.out))
-    load regFileB (srcB c (instrMem.out))
+    load regFileA (srcA c (instrData))
+    load regFileB (srcB c (instrData))
 
     -- Latch instruction and PC for next stage
-    instr2 <== instrMem.out
+    instr2 <== instrData
     pc2 <== pc1.val
 
     -- Stage 2: Latch Operands
@@ -165,8 +178,8 @@ makeCPUPipeline sim c = do
 
     -- Pipeline stall
     when (lateWire.val) do
-      when ((srcA c (instrMem.out) .==. dst c (instr2.val)) .|.
-            (srcB c (instrMem.out) .==. dst c (instr2.val))) do
+      when ((srcA c (instrData) .==. dst c (instr2.val)) .|.
+            (srcB c (instrData) .==. dst c (instr2.val))) do
         stallWire <== true
 
     -- Latch instruction and PC for next stage
@@ -223,7 +236,14 @@ makeCPUPipeline sim c = do
     when (postResultWire.active.inv .&. delay 0 (resultWire.active)) do
       finalResultWire <== resultWire.val.old
 
+    display instrData
+    display (regA.val)
+    display (regB.val)
     -- Writeback
     when (finalResultWire.active) do
       store regFileA rd (finalResultWire.val)
       store regFileB rd (finalResultWire.val)
+
+    retval <== go4.val
+  return retval
+

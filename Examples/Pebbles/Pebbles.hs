@@ -12,6 +12,9 @@ import Trap
 import DataMem
 import Pipeline
 
+-- RVFI imports
+import RVFI_DII
+
 -- RISCV I instructions
 
 addi :: State -> Bit 12 -> Action ()
@@ -142,9 +145,24 @@ csrrw s csrUnit csr = do
   writeCSR csrUnit csr (s.opA)
 
 -- RV32I CPU, with UART input and output channels
-makePebbles :: Bool -> Stream (Bit 8) -> Module (Stream (Bit 8))
-makePebbles sim uartIn = do
+-- TODO discuss:
+{-
+    make this bool -> bool -> DII_AND_UART -> Module DII_AND_UART
+    where DII_AND_UART is a record containing Maybe DII, UART
+    does this make sense for synthesis?
+    having sim = false and RVFI connections might make sense?
+    assume so for now
+-}
+-- makePebbles :: Bool -> Stream (Bit 8) -> Module (Stream (Bit 8))
+makePebbles :: Bool -> Stream (Bit 8) -> Stream (Bit 32)-> Module (Stream (Bit 8), Wire (Bit 1))
+--makePebbles :: Bool -> Stream (Bit 8) -> Stream (Bit 32)-> Module (Stream (Bit 8))
+-- makePebbles sim uartIn = do
+makePebbles sim uartIn insnIn = do
   -- Tightly-coupled data memory
+  -- TODO can i replace this with a . operator?
+  --let uartIn = uartInput dii_in
+  --let insnIn = insnInput dii_in
+
   mem <- makeDataMem sim
 
   -- CSR unit
@@ -194,14 +212,7 @@ makePebbles sim uartIn = do
         [ "imm[11:0] <5> u<1> w<2> <5> 0000011" ==> memRead_2 s mem ]
 
   -- CPU pipeline
-  makeCPUPipeline sim $
-    Config {
-      srcA = range @19 @15
-    , srcB = range @24 @20
-    , dst  = range @11 @7
-    , preExecRules = preExecute
-    , execRules = execute
-    , postExecRules = postExecute
-    }
+  retire <-  makeCPUPipeline sim (Config { srcA = range @19 @15 , srcB = range @24 @20 , dst  = range @11 @7 , preExecRules = preExecute , execRules = execute , postExecRules = postExecute }) insnIn
 
-  return uartOut
+
+  return (uartOut, retire)

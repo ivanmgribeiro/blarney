@@ -1,6 +1,6 @@
 .PHONY: all
 all:
-	blc Main.hs -o Pebbles
+	../../Scripts/blc Main.hs -o Pebbles
 	./Pebbles
 	make -C Pebbles-Verilog
 	make -C Boot

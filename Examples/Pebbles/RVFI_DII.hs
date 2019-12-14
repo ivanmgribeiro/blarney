@@ -3,7 +3,8 @@ module RVFI_DII where
 import Blarney
 import Blarney.Stream
 
-data RVFI_DII_Data = RVFI_DII_Data { rvfi_pc_rdata :: Bit 32
+data RVFI_DII_Data = RVFI_DII_Data { rvfi_valid :: Bit 1
+                                   , rvfi_pc_rdata :: Bit 32
                                    , rvfi_pc_wdata :: Bit 32
                                    , rvfi_insn     :: Bit 32
                                    , rvfi_rs1_data :: Bit 32
@@ -18,16 +19,18 @@ data RVFI_DII_Data = RVFI_DII_Data { rvfi_pc_rdata :: Bit 32
                                    , rvfi_rs2_addr :: Bit 5
                                    , rvfi_rd_addr :: Bit 5
                                    , rvfi_trap :: Bit 1
-                                   }
+                                   } deriving (Generic, Bits, Interface, FShow)
 
 data RVFI_DII_In = RVFI_DII_In { uartInput :: Stream (Bit 8)
                                -- TODO replace with Maybe Stream
                                , insnInput :: Stream (Bit 32)
-                               }
+                               } deriving (Generic, Interface)
 
 
+{-
 data RVFI_DII_Out = RVFI_DII_Out { uartOutput :: Stream (Bit 8)
-                                 , rvfiData :: Maybe RVFI_DII_Data
-                                 }
+                                 , rvfiData :: RVFI_DII_Data
+                                 } deriving (Generic, Interface)
+                                 -}
                                  
 

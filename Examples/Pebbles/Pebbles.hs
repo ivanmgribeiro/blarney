@@ -154,14 +154,14 @@ csrrw s csrUnit csr = do
     assume so for now
 -}
 -- makePebbles :: Bool -> Stream (Bit 8) -> Module (Stream (Bit 8))
-makePebbles :: Bool -> Stream (Bit 8) -> Stream (Bit 32)-> Module (Stream (Bit 8), Wire (Bit 1))
+makePebbles :: Bool -> Stream (Bit 8) -> RVFI_DII_In -> Module (Stream (Bit 8), RVFI_DII_Data)
 --makePebbles :: Bool -> Stream (Bit 8) -> Stream (Bit 32)-> Module (Stream (Bit 8))
 -- makePebbles sim uartIn = do
-makePebbles sim uartIn insnIn = do
+makePebbles sim uartIn dii_in = do
   -- Tightly-coupled data memory
   -- TODO can i replace this with a . operator?
   --let uartIn = uartInput dii_in
-  --let insnIn = insnInput dii_in
+  let insnIn = insnInput dii_in
 
   mem <- makeDataMem sim
 
@@ -212,15 +212,14 @@ makePebbles sim uartIn insnIn = do
         [ "imm[11:0] <5> u<1> w<2> <5> 0000011" ==> memRead_2 s mem ]
 
   -- CPU pipeline
-  retire <- makeCPUPipeline sim
-                            (Config { srcA = slice @19 @15
-                                    , srcB = slice @24 @20
-                                    , dst  = slice @11 @7
-                                    , preExecRules = preExecute
-                                    , execRules = execute
-                                    , postExecRules = postExecute
-                                    })
-                            insnIn
+  dii_data <- makeCPUPipeline sim
+                              (Config { srcA = slice @19 @15
+                                      , srcB = slice @24 @20
+                                      , dst  = slice @11 @7
+                                      , preExecRules = preExecute
+                                      , execRules = execute
+                                      , postExecRules = postExecute
+                                      })
+                              insnIn
 
-
-  return (uartOut, retire)
+  return  (uartOut, dii_data)

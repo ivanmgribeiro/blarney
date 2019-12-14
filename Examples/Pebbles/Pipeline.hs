@@ -7,6 +7,8 @@ import Blarney.RAM
 import Blarney.BitScan
 import Blarney.Stream
 
+import RVFI_DII
+
 -- Instructions
 type Instr = Bit 32
 
@@ -47,9 +49,28 @@ data State =
   , late :: WriteOnly (Bit 1)
   }
 
+rvfi_base :: RVFI_DII_Data = RVFI_DII_Data {
+    rvfi_valid      = 0,
+    rvfi_pc_rdata   = 0,
+    rvfi_pc_wdata   = 0,
+    rvfi_insn       = 0,
+    rvfi_rs1_data   = 0,
+    rvfi_rs2_data   = 0,
+    rvfi_rd_wdata   = 0,
+    rvfi_mem_addr   = 0,
+    rvfi_mem_rdata  = 0,
+    rvfi_mem_wdata  = 0,
+    rvfi_mem_rmask  = 0,
+    rvfi_mem_wmask  = 0,
+    rvfi_rs1_addr   = 0,
+    rvfi_rs2_addr   = 0,
+    rvfi_rd_addr    = 0,
+    rvfi_trap       = 0
+}
+
 -- Pipeline
 -- makeCPUPipeline :: Bool -> Config -> Module ()
-makeCPUPipeline :: Bool -> Config -> Stream (Bit 32) -> Module (Wire(Bit 1))
+makeCPUPipeline :: Bool -> Config -> Stream (Bit 32) -> Module (RVFI_DII_Data)
 makeCPUPipeline sim c dii_in = do
   -- Instruction memory
   let ext = if sim then ".hex" else ".mif"
@@ -89,7 +110,8 @@ makeCPUPipeline sim c dii_in = do
   always (count <== count.val + 1)
 
   -- Program counters for each pipeline stage
-  pc1 :: Reg (Bit 32) <- makeReg 0xfffffffc
+  --pc1 :: Reg (Bit 32) <- makeReg 0xfffffffc
+  pc1 :: Reg (Bit 32) <- makeReg 0x7ffffffc
   pc2 :: Reg (Bit 32) <- makeReg dontCare
   pc3 :: Reg (Bit 32) <- makeReg dontCare
 
@@ -106,17 +128,28 @@ makeCPUPipeline sim c dii_in = do
   -- TODO changed, rename this later
   retval :: Wire (Bit 1) <- makeWire 0
 
-  always do
-    -- TODO remove?
-    let instrData = dii_in.peek
-    dii_in.consume
+  -- TODO check this stuff
+  -- RVFI registers
+  rvfi1 :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
+  rvfi2 :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
+  rvfi3 :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
+  rvfi4 :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
+  rvfifinal :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
 
+  always do
     -- Stage 0: Instruction Fetch
     -- ==========================
 
     -- PC to fetch
+    let instrData = dii_in.peek
+
+    when ((dii_in.canPeek) .&. (stallWire.val.inv)) do dii_in.consume
+    when ((dii_in.canPeek) .&. (stallWire.val.inv)) do display "consumed instruction: 0x" (instrData)
+    when ((dii_in.canPeek) .&. (stallWire.val.inv)) do display "state: " (dii_in.canPeek) " " (stallWire.val.inv)
+
+
     let pcFetch = pcNext.active ?
-                    (pcNext.val, stallWire.val ? (pc1.val, pc1.val + 4))
+                    (pcNext.val, (stallWire.val .|. dii_in.canPeek.inv) ? (pc1.val, pc1.val + 4))
     pc1 <== pcFetch
 
     -- Index the instruction memory
@@ -124,7 +157,17 @@ makeCPUPipeline sim c dii_in = do
     load instrMem instrAddr
 
     -- Always trigger stage 1, except on first cycle
-    let go1 :: Bit 1 = reg 0 1
+    --let go1 :: Bit 1 = reg 0 1
+    let go1 :: Bit 1 = dii_in.canPeek
+
+
+    -- TODO set RVFI PC RData (and instruction?)
+    rvfi1 <== rvfi_base {
+        rvfi_pc_rdata = pcFetch,
+        rvfi_pc_wdata = pcFetch + 4,
+        rvfi_insn = instrData
+    }
+
 
     -- Stage 1: Operand Fetch
     -- ======================
@@ -141,6 +184,12 @@ makeCPUPipeline sim c dii_in = do
     -- Latch instruction and PC for next stage
     instr2 <== instrData
     pc2 <== pc1.val
+
+    -- TODO set RVFI register addresses
+    rvfi2 <== (rvfi1.val) {
+        rvfi_rs1_addr = (srcA c (instrData)),
+        rvfi_rs2_addr = (srcB c (instrData))
+    }
 
     -- Stage 2: Latch Operands
     -- =======================
@@ -190,6 +239,9 @@ makeCPUPipeline sim c dii_in = do
     when (pcNext.active.inv) do
       go3 <== go2.val
 
+    -- Pass on RVFI register
+    rvfi3 <== rvfi2.val
+
     -- Stage 3: Execute
     -- ================
 
@@ -208,8 +260,15 @@ makeCPUPipeline sim c dii_in = do
     when (go3.val) do
       match (instr3.val) (execRules c state)
       go4 <== go3.val
+      -- set RVFI mem info here or in the instruction definitions?
 
     instr4 <== instr3.val
+
+    -- set RVFI register values
+    rvfi4 <== (rvfi3.val) {
+        rvfi_rs1_data = regA.val,
+        rvfi_rs2_data = regB.val
+    }
 
     -- Stage 4: Writeback
     -- ==================
@@ -231,19 +290,28 @@ makeCPUPipeline sim c dii_in = do
 
     -- Determine final result
     let rd = dst c (instr4.val)
+
+    let rvfiRes = if postResultWire.active then postResultWire.val
+                                           else resultWire.val.old
+
     when (postResultWire.active) do
       finalResultWire <== postResultWire.val
     when (postResultWire.active.inv .&. delay 0 (resultWire.active)) do
       finalResultWire <== resultWire.val.old
 
-    display instrData
-    display (regA.val)
-    display (regB.val)
+
     -- Writeback
     when (finalResultWire.active) do
       store regFileA rd (finalResultWire.val)
       store regFileB rd (finalResultWire.val)
 
-    retval <== go4.val
-  return retval
+    -- set RVFI register write value
+    rvfifinal <== (rvfi4.val) {
+        rvfi_valid = (go4.val.old),
+        rvfi_rd_wdata = (rvfiRes)
+    }
 
+    display $ rvfifinal.val
+
+
+  return $ rvfifinal.val

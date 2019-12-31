@@ -14,6 +14,12 @@ type DataMem = [RAM (Bit (LogDataMemSize-2)) (Bit 8)]
 -- Constructor
 makeDataMem :: Bool -> Module DataMem
 makeDataMem sim =
+    sequence [makeRAM | i <- [0..3]]
+  where ext = if sim then ".hex" else ".mif"
+
+-- Constructor
+makeDataMemInit :: Bool -> Module DataMem
+makeDataMemInit sim =
     sequence [makeRAMInit ("data_" ++ show i ++ ext) | i <- [0..3]]
   where ext = if sim then ".hex" else ".mif"
 

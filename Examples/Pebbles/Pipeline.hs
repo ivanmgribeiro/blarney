@@ -1,5 +1,4 @@
-module Pipeline where
-
+module Pipeline where 
 -- 5-stage pipeline for 32-bit 3-operand register-based CPU.
 
 import Blarney
@@ -46,9 +45,12 @@ data State =
   , result :: WriteOnly (Bit 32)
     -- Indicate late result (i.e. computed in writeback rather than execute)
   , late :: WriteOnly (Bit 1)
+    -- Keep track of whether we've encountered an exception
+    -- TODO rename to trap in order to align with RVFI naming?
+  , exc :: WriteOnly (Bit 1)
   }
 
-rvfi_base :: RVFI_DII_Data = RVFI_DII_Data {
+rvfi_base :: RVFI_Data = RVFI_Data {
     rvfi_valid      = 0,
     rvfi_pc_rdata   = 0,
     rvfi_pc_wdata   = 0,
@@ -110,9 +112,17 @@ makeCPUPipeline sim c dii_in = do
 
   -- Program counters for each pipeline stage
   --pc1 :: Reg (Bit 32) <- makeReg 0xfffffffc
-  pc1 :: Reg (Bit 32) <- makeReg 0x7ffffffc
+  --pc1 :: Reg (Bit 32) <- makeReg 0x7ffffffc
+  pc1 :: Reg (Bit 32) <- makeReg 0x80000000
   pc2 :: Reg (Bit 32) <- makeReg dontCare
   pc3 :: Reg (Bit 32) <- makeReg dontCare
+
+  -- TODO rename to trapWire to stay in line with RVFI naming?
+  exc2_wire :: Wire (Bit 1) <- makeWire 0
+  exc3_wire :: Wire (Bit 1) <- makeWire 0
+  exc3_reg :: Reg (Bit 1) <- makeDReg 0
+  exc4_wire :: Wire (Bit 1) <- makeWire 0
+  exc4_reg :: Reg (Bit 1) <- makeDReg 0
 
   -- Instruction registers for pipeline stages 2 and 3 and 4
   instr2 :: Reg Instr <- makeReg 0
@@ -129,11 +139,11 @@ makeCPUPipeline sim c dii_in = do
 
   -- TODO check this stuff
   -- RVFI registers
-  rvfi1 :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
-  rvfi2 :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
-  rvfi3 :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
-  rvfi4 :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
-  rvfifinal :: Reg (RVFI_DII_Data) <- makeDReg rvfi_base
+  rvfi0 :: Reg (RVFI_Data) <- makeDReg rvfi_base
+  rvfi1 :: Reg (RVFI_Data) <- makeDReg rvfi_base
+  rvfi2 :: Reg (RVFI_Data) <- makeDReg rvfi_base
+  rvfi3 :: Reg (RVFI_Data) <- makeDReg rvfi_base
+  rvfi4 :: Reg (RVFI_Data) <- makeDReg rvfi_base
 
   always do
     -- Stage 0: Instruction Fetch
@@ -142,9 +152,8 @@ makeCPUPipeline sim c dii_in = do
     -- PC to fetch
     let instrData = dii_in.peek
 
-    when ((dii_in.canPeek) .&. (stallWire.val.inv)) do dii_in.consume
-    when ((dii_in.canPeek) .&. (stallWire.val.inv)) do display "consumed instruction: 0x" (instrData)
-    when ((dii_in.canPeek) .&. (stallWire.val.inv)) do display "state: " (dii_in.canPeek) " " (stallWire.val.inv)
+    when ((dii_in.canPeek) .&. (stallWire.val.inv) .&. (exc3_wire.val.inv) .&. (exc3_wire.val.inv)) do dii_in.consume
+    when ((dii_in.canPeek) .&. (stallWire.val.inv) .&. (exc3_wire.val.inv) .&. (exc3_wire.val.inv)) do display "consumed instruction: 0x" (instrData)
 
 
     let pcFetch = pcNext.active ?
@@ -161,10 +170,9 @@ makeCPUPipeline sim c dii_in = do
 
 
     -- TODO set RVFI PC RData (and instruction?)
-    rvfi1 <== rvfi_base {
+    rvfi0 <== rvfi_base {
         rvfi_pc_rdata = pcFetch,
-        rvfi_pc_wdata = pcFetch + 4,
-        rvfi_insn = instrData
+        rvfi_pc_wdata = pcFetch + 4
     }
 
 
@@ -172,9 +180,11 @@ makeCPUPipeline sim c dii_in = do
     -- ======================
 
     -- Trigger stage 2, except on pipeline flush or stall
+    let go2_cond = pcNext.active.inv .&. stallWire.val.inv
     when go1 do
-      when (pcNext.active.inv .&. stallWire.val.inv) do
-        go2 <== 1
+      go2 <== if go2_cond then 1 else 0
+      --when (pcNext.active.inv .&. stallWire.val.inv) do
+      --  go2 <== 1
 
     -- Fetch operands
     load regFileA (srcA c (instrData))
@@ -185,10 +195,15 @@ makeCPUPipeline sim c dii_in = do
     pc2 <== pc1.val
 
     -- TODO set RVFI register addresses
-    rvfi2 <== (rvfi1.val) {
-        rvfi_rs1_addr = (srcA c (instrData)),
-        rvfi_rs2_addr = (srcB c (instrData))
-    }
+    rvfi1 <== if go2_cond then
+      (rvfi0.val) {
+          rvfi_insn = instrData,
+          rvfi_rs1_addr = (srcA c (instrData)),
+          rvfi_rs2_addr = (srcB c (instrData))
+      }
+    else
+      rvfi0.val
+
 
     -- Stage 2: Latch Operands
     -- =======================
@@ -218,6 +233,7 @@ makeCPUPipeline sim c dii_in = do
           , pc     = ReadWrite (pc2.val) (error "Can't write PC in pre-execute")
           , result = error "Can't write result in pre-execute"
           , late   = WriteOnly (lateWire <==)
+          , exc    = WriteOnly (exc2_wire <==)
           }
 
     -- Pre-execute rules
@@ -235,11 +251,19 @@ makeCPUPipeline sim c dii_in = do
     pc3 <== pc2.val
 
     -- Trigger stage 3, except on pipeline flush
-    when (pcNext.active.inv) do
+    let go3_cond = pcNext.active.inv
+    when (go3_cond) do
       go3 <== go2.val
 
     -- Pass on RVFI register
-    rvfi3 <== rvfi2.val
+    rvfi2 <== if go3_cond then rvfi1.val else rvfi2.val
+
+
+    when (exc2_wire.val) do
+        display "@@@@@@@@@ exception in stage 2 on instruction 0x" (instr2.val)
+
+    -- TODO this might need to be stalled as well
+    exc3_reg <== exc2_wire.val
 
     -- Stage 3: Execute
     -- ================
@@ -253,21 +277,29 @@ makeCPUPipeline sim c dii_in = do
                        when (dst c (instr3.val) .!=. 0) do
                          resultWire <== x
           , late   = error "Cant write late signal in execute"
+          --, exc    = WriteOnly (exc3 <==)
+          , exc    = WriteOnly (exc3_wire <==)
           }
 
     -- Execute rules
     when (go3.val) do
       match (instr3.val) (execRules c state)
-      go4 <== go3.val
+      go4 <== go3.val .&. (exc3_wire.val.inv .|. exc3_reg.val.inv)
       -- set RVFI mem info here or in the instruction definitions?
 
     instr4 <== instr3.val
 
     -- set RVFI register values
-    rvfi4 <== (rvfi3.val) {
+    rvfi3 <== (rvfi2.val) {
         rvfi_rs1_data = regA.val,
-        rvfi_rs2_data = regB.val
+        rvfi_rs2_data = regB.val,
+        rvfi_pc_wdata = if (pcNext.active) then pcNext.val else rvfi2.val.rvfi_pc_wdata
     }
+
+    when (exc3_wire.val .|. exc3_reg.val) do
+        display "@@@@@@@@@ exception at stage 3 on instruction 0x" (instr3.val)
+
+    exc4_reg <== (exc3_wire.val) .|. (exc3_reg.val)
 
     -- Stage 4: Writeback
     -- ==================
@@ -281,6 +313,7 @@ makeCPUPipeline sim c dii_in = do
                        when (dst c (instr4.val) .!=. 0) do
                          postResultWire <== x
           , late   = error "Can't write late signal in post-execute"
+          , exc    = WriteOnly (exc4_wire <==)
           }
 
     -- Post-execute rules
@@ -290,8 +323,12 @@ makeCPUPipeline sim c dii_in = do
     -- Determine final result
     let rd = dst c (instr4.val)
 
-    let rvfiRes = if postResultWire.active then postResultWire.val
-                                           else resultWire.val.old
+    let rvfiRes = if postResultWire.active
+                    then postResultWire.val
+                  else if postResultWire.active.inv .&. delay 0 (resultWire.active)
+                    then resultWire.val.old
+                  else
+                    0
 
     when (postResultWire.active) do
       finalResultWire <== postResultWire.val
@@ -300,17 +337,41 @@ makeCPUPipeline sim c dii_in = do
 
 
     -- Writeback
-    when (finalResultWire.active) do
+    when ((finalResultWire.active) .&. (exc4_wire.val.inv) .&. (exc4_reg.val.inv)) do
       store regFileA rd (finalResultWire.val)
       store regFileB rd (finalResultWire.val)
+      display "############## writing values for instruction 0x" (instr4.val)
 
     -- set RVFI register write value
-    rvfifinal <== (rvfi4.val) {
-        rvfi_valid = (go4.val.old),
-        rvfi_rd_wdata = (rvfiRes)
+    let rvfifinal = (rvfi3.val) {
+        rvfi_valid = (go4.val .|. exc4_wire.val .|. exc4_reg.val),
+        rvfi_rd_wdata = (rvfiRes),
+        rvfi_trap = (exc4_wire.val .|. exc4_reg.val)
     }
 
-    display $ rvfifinal.val
+    rvfi4 <== rvfifinal
+
+    when (exc4_wire.val .|. exc4_reg.val) do
+        display "@@@@@@@@@ exception in stage 4 on instruction 0x" (instr4.val)
 
 
-  return $ rvfifinal.val
+    display $ rvfi4.val
+    display "\n\n"
+
+    --when (exc3_wire.val .==. 1) do
+    display "pipeline state when instruction 0x" (instr3.val) " is fed in"
+    display (instrData) ", go1: " (go1)
+    display (instr2.val) ", go2: " (go2.val)
+    display (instr3.val) ", go3: " (go3.val)
+    display (instr4.val) ", go4: " (go4.val)
+    display "\n\n"
+
+
+
+  return RVFI_DII_Data { rvfi_data = rvfi4.val
+                       , flush = exc3_wire.val .|. exc3_reg.val .|. pcNext.active
+                       , go2 = go2.val
+                       , go3 = go3.val
+                       , go4 = go4.val
+                       , stall_wire = stallWire.val
+                       }

@@ -140,16 +140,24 @@ memRead_2_old s mem csrUnit imm unsigned width =
 
 memRead_1 :: State -> MemIn -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
 memRead_1 s memIn csrUnit imm width = do
-  memIn.addr <== s.opA + signExtend imm
-  memIn.request <== 1
-  memIn.write_memIn <== 0
-  memIn.width_memIn <== width
-  memIn.value_memIn <== 0
+  memIn <== MemReq {
+    memReqAddr = s.opA + signExtend imm
+  , memReqWrite = 0
+  , memReqWidth = width
+  , memReqValue = 0
+  }
 
-memRead_2 :: State -> MemOut -> CSRUnit -> Bit 12 -> Bit 1 -> Bit 2 -> Action ()
-memRead_2 s memOut csrUnit imm unsigned width =
-  if (isSome (memOut.value_memOut)) then
-    s.result <== memOut.value_memOut.val
+memRead_2 :: State -> MemResp -> CSRUnit -> Bit 12 -> Bit 1 -> Bit 2 -> Action ()
+memRead_2 s memResp csrUnit imm unsigned width =
+  if (isSome (memResp.memRespValue)) then do
+    let res = memResp.memRespValue.val
+    let resSigned = if (width .==. 2) then
+                      res
+                    else if (width .==. 1) then
+                      if unsigned then res else signExtend (range @15 @0 res)
+                    else
+                      if unsigned then res else signExtend (range @7 @0 res)
+    s.result <== resSigned
   else
     trap s csrUnit (Exception exc_loadAccessFault)
 
@@ -163,16 +171,16 @@ memWrite_old s mem csrUnit imm width = do
 
 memWrite_1 :: State -> MemIn -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
 memWrite_1 s memIn csrUnit imm width = do
-  memIn.addr <== s.opA + signExtend imm
-  memIn.request <== 1
-  memIn.write_memIn <== 1
-  memIn.width_memIn <== width
-  memIn.value_memIn <== s.opB
+  memIn <== MemReq {
+    memReqAddr = s.opA + signExtend imm
+  , memReqWrite = 1
+  , memReqWidth = width
+  , memReqValue = s.opB
+  }
 
-memWrite_2 :: State -> MemOut -> CSRUnit -> Action ()
-memWrite_2 s memOut csrUnit = do
-  when (isNone (memOut.value_memOut)) do
-    display "memwrite 2 error"
+memWrite_2 :: State -> MemResp -> CSRUnit -> Action ()
+memWrite_2 s memResp csrUnit = do
+  when (isNone (memResp.memRespValue)) do
     trap s csrUnit (Exception exc_storeAMOAccessFault)
 
 fence :: State -> Bit 4 -> Bit 4 -> Bit 4 -> Action ()
@@ -191,40 +199,19 @@ csrrw s csrUnit csr = do
   writeCSR csrUnit csr (s.opA)
 
 -- RV32I CPU, with UART input and output channels
--- TODO discuss:
-{-
-    make this bool -> bool -> DII_AND_UART -> Module DII_AND_UART
-    where DII_AND_UART is a record containing Maybe DII, UART
-    does this make sense for synthesis?
-    having sim = false and RVFI connections might make sense?
-    assume so for now
--}
--- makePebbles :: Bool -> Stream (Bit 8) -> Module (Stream (Bit 8))
 makePebbles :: Bool -> RVFI_DII_In -> Module (RVFI_DII_Out)
---makePebbles :: Bool -> Stream (Bit 8) -> Stream (Bit 32)-> Module (Stream (Bit 8))
--- makePebbles sim uartIn = do
 makePebbles sim dii_in = do
-  -- Tightly-coupled data memory
   -- TODO can i replace this with a . operator?
-  --let uartIn = uartInput dii_in
   let insnIn = insnInput dii_in
   let uartIn = uartInput dii_in
 
-  memAddr <- makeWire 0
-  memRequest <- makeWire 0
-  memWrite_memIn <- makeWire 0
-  memWidth_memIn <- makeWire 0
-  memValue_memIn <- makeWire 0
-
-  let memInput = MemIn {
-    addr = memAddr,
-    request = memRequest,
-    write_memIn = memWrite_memIn,
-    width_memIn = memWidth_memIn,
-    value_memIn = memValue_memIn
+  memInput :: Wire (MemReq) <- makeWire MemReq {
+    memReqAddr = 0
+  , memReqWrite = 0
+  , memReqWidth = 0
+  , memReqValue = 0
   }
 
-  mem <- makeDataMem sim
   memOutput <- makeDataMemCore sim memInput
 
   -- CSR unit
@@ -277,13 +264,15 @@ makePebbles sim dii_in = do
         ]
 
   -- CPU pipeline
-  rvfi_dii_data <-  makeCPUPipeline sim (Config { srcA = range @19 @15,
-                                                  srcB = range @24 @20,
-                                                  dst  = range @11 @7,
-                                                  preExecRules = preExecute,
-                                                  execRules = execute,
-                                                  postExecRules = postExecute
-                                                }) insnIn
+  rvfi_dii_data <-  makeCPUPipeline sim
+                                    (Config { srcA = range @19 @15,
+                                              srcB = range @24 @20,
+                                              dst  = range @11 @7,
+                                              preExecRules = preExecute,
+                                              execRules = execute,
+                                              postExecRules = postExecute
+                                    })
+                                    insnIn
 
 
   return $ RVFI_DII_Out {uart_output = uartOut, rvfi_dii_data = rvfi_dii_data}

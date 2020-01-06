@@ -52,7 +52,6 @@ toCause (Interrupt i) = 0b1 # i
 -- |Does not update mstatus.
 trap :: State -> CSRUnit -> TrapCode -> Action ()
 trap s csr c = do
-  --display "trapping at pc: 0x" (s.pc.val)
   csr.mcause <== toCause c
   s.pc <== csr.mepc.val
   s.exc <== 1

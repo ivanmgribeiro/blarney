@@ -3,6 +3,7 @@ module DataMem where
 
 import Blarney
 import Blarney.RAM
+import Blarney.Option
 
 -- Data memory size in bytes
 type LogDataMemSize = 16
@@ -10,6 +11,88 @@ type LogDataMemSize = 16
 -- Implement data memory as four block RAMs
 -- (one for each byte of word)
 type DataMem = [RAM (Bit (LogDataMemSize-2)) (Bit 8)]
+
+-- RV32I memory access width
+type AccessWidth = Bit 2
+
+-- TODO do these really need to be Wires?
+data MemIn = MemIn {
+  addr :: Wire (Bit 32),
+  request :: Wire (Bit 1),
+  write_memIn :: Wire (Bit 1),
+  width_memIn :: Wire (AccessWidth),
+  value_memIn :: Wire (Bit 32)
+} deriving (Generic, Interface)
+
+data MemOut = MemOut {
+  value_memOut :: Option (Bit 32)
+} deriving (Generic, Bits)
+
+memBase = 0x80000000
+memSize = 0x10000
+
+makeDataMemCore :: Bool -> MemIn -> Module (MemOut)
+makeDataMemCore sim req = do
+  dataMem :: DataMem <- makeDataMem sim
+
+  readPending :: Reg (Bit 1) <- makeReg 0
+  readPendingWidth :: Reg (AccessWidth) <- makeReg dontCare
+  errPending :: Reg (Bit 1) <- makeDReg 0
+
+  -- TODO this probably shouldn't be a wire
+  responseData :: Wire (Bit 32) <- makeWire 0
+
+  always do
+    let isUnaligned = select [ isWordAccess (req.width_memIn.val) --> range @1 @0 (req.addr.val) .!=. 0
+                             , isHalfAccess (req.width_memIn.val) --> bit 0 (req.addr.val) .!=. 0
+                             , isByteAccess (req.width_memIn.val) --> 0
+                             ]
+    -- read logic part 1
+    readPending <== req.request.active .&. req.request.val .&. req.write_memIn.val.inv
+    readPendingWidth <== req.width_memIn.val
+
+    when ((req.request.val) .&. (req.write_memIn.val.inv) .&. (req.request.active)) do
+      when ((req.addr.val .>=. memBase) .&. (req.addr.val .<. memBase + memSize) .&. (isUnaligned.inv)) do
+        dataMemRead dataMem (req.addr.val)
+
+      when ((req.addr.val .<. memBase) .|. (req.addr.val .>=. memBase + memSize) .|. (isUnaligned)) do
+        display "out of bounds"
+        errPending <== 1
+
+    -- read logic part 2
+    when (readPending.val) do
+      let [b0, b1, b2, b3] = map out dataMem
+      let wAligned = b3 # b2 # b1 # b0
+      let hAligned = 0 # ((index @1 (req.addr.val) .==. 0) ? (b1 # b0, b3 # b2))
+      -- TODO clean this up into a case statement?
+      let bAligned = select [ range @1 @0 (req.addr.val) .==. 0 --> 0 # b0
+                            , range @1 @0 (req.addr.val) .==. 1 --> 0 # b1
+                            , range @1 @0 (req.addr.val) .==. 2 --> 0 # b2
+                            , range @1 @0 (req.addr.val) .==. 3 --> 0 # b3
+                            ]
+      responseData <== select [
+          isWordAccess (readPendingWidth.val) --> wAligned
+        , isHalfAccess (readPendingWidth.val) --> hAligned
+        , isByteAccess (readPendingWidth.val) --> bAligned
+        ]
+
+
+
+    -- write logic
+    when ((req.request.val) .&. (req.write_memIn.val) .&. (req.request.active)) do
+      when ((req.addr.val .>=. memBase) .&. (req.addr.val .<. memBase + memSize) .&. (isUnaligned.inv)) do
+        dataMemWrite dataMem (req.width_memIn.val) (req.addr.val) (req.value_memIn.val)
+        display "test statement"
+      when ((req.addr.val .<. memBase) .|. (req.addr.val .>=. memBase + memSize) .|. (isUnaligned)) do
+        errPending <== 1
+        display "************** address 0x" (req.addr.val) " causes error"
+
+
+  return MemOut {
+    value_memOut = errPending.val ? (none, some (responseData.val))
+  }
+
+
 
 -- Constructor
 makeDataMem :: Bool -> Module DataMem
@@ -23,8 +106,6 @@ makeDataMemInit sim =
     sequence [makeRAMInit ("data_" ++ show i ++ ext) | i <- [0..3]]
   where ext = if sim then ".hex" else ".mif"
 
--- RV32I memory access width
-type AccessWidth = Bit 2
 
 -- Byte, half-word, or word access?
 isByteAccess, isHalfAccess, isWordAccess :: AccessWidth -> Bit 1
@@ -104,3 +185,11 @@ dataMemRead :: DataMem -> Bit 32 -> Action ()
 dataMemRead dataMem addr =
     sequence_ [load mem a | mem <- dataMem]
   where a = lower (upper addr :: Bit 30)
+
+
+
+-- functions intended for external use
+--dataMemWriteReq
+--dataMemReadReq
+--dataMemGetReadResp
+--dataMemGetWriteResp

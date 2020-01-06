@@ -23,10 +23,8 @@ data RVFI_Data = RVFI_Data { rvfi_valid :: Bit 1
 
 data RVFI_DII_Data = RVFI_DII_Data { rvfi_data :: RVFI_Data
                                    , flush :: Bit 1
-                                   , go2 :: Bit 1
-                                   , go3 :: Bit 1
+                                   , flush4 :: Bit 1
                                    , go4 :: Bit 1
-                                   , stall_wire :: Bit 1
                                    } deriving (Generic, Interface)
 
 data RVFI_DII_In = RVFI_DII_In { uartInput :: Stream (Bit 8)

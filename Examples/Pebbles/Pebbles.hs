@@ -5,6 +5,7 @@ import Blarney
 import Blarney.Queue
 import Blarney.Stream
 import Blarney.BitScan
+import Blarney.Option
 
 -- Pebbles imports
 import CSR
@@ -117,26 +118,61 @@ bgeu s imm = do
 memRead_0 :: State -> Action ()
 memRead_0 s = s.late <== 1
 
-memRead_1 :: State -> DataMem -> CSRUnit -> Bit 12 -> Action ()
-memRead_1 s mem csrUnit imm =
-  if (((s.opA + signExtend imm) .>=. 0x80000000) .&. ((s.opA + signExtend imm) .<. 0x80010000)
-     .&. (range @1 @0 (s.opA + signExtend imm) .==. 0)) then
+memRead_1_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Action ()
+memRead_1_old s mem csrUnit imm =
+--  if (((s.opA + signExtend imm) .>=. 0x80000000) .&. ((s.opA + signExtend imm) .<. 0x80010000)
+--     .&. (range @1 @0 (s.opA + signExtend imm) .==. 0)) then
     dataMemRead mem (s.opA + signExtend imm)
     --display (range @1 @0 (s.opA + signExtend imm))
+--  else
+--    trap s csrUnit (Exception exc_loadAccessFault)
+
+memRead_2_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Bit 1 -> Bit 2 -> Action ()
+memRead_2_old s mem csrUnit imm unsigned width =
+  --display "read memory value: " $ readMux mem (s.opA + signExtend imm) width unsigned
+  --case res of
+  --  (Left memData) -> s.result <== memData
+  --  (Right resp) -> do
+  --    trap s csrUnit (Exception exc_loadAccessFault)
+  --    display "tried to read memory out of bounds"
+  --where res = readMux mem (s.opA + signExtend imm) width unsigned
+  s.result <== readMux mem (s.opA + signExtend imm) width unsigned
+
+memRead_1 :: State -> MemIn -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
+memRead_1 s memIn csrUnit imm width = do
+  memIn.addr <== s.opA + signExtend imm
+  memIn.request <== 1
+  memIn.write_memIn <== 0
+  memIn.width_memIn <== width
+  memIn.value_memIn <== 0
+
+memRead_2 :: State -> MemOut -> CSRUnit -> Bit 12 -> Bit 1 -> Bit 2 -> Action ()
+memRead_2 s memOut csrUnit imm unsigned width =
+  if (isSome (memOut.value_memOut)) then
+    s.result <== memOut.value_memOut.val
   else
     trap s csrUnit (Exception exc_loadAccessFault)
 
-memRead_2 :: State -> DataMem -> Bit 12 -> Bit 1 -> Bit 2 -> Action ()
-memRead_2 s mem imm unsigned width =
-  --display "read memory value: " $ readMux mem (s.opA + signExtend imm) width unsigned
-  s.result <== readMux mem (s.opA + signExtend imm) width unsigned
-
-memWrite :: State -> DataMem -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
-memWrite s mem csrUnit imm width = do
-  if ((s.opA + signExtend imm .>. 0x80000000) .&. (s.opA + signExtend imm .<. 0x80010000)
+memWrite_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
+memWrite_old s mem csrUnit imm width = do
+  if ((s.opA + signExtend imm .>=. 0x80000000) .&. (s.opA + signExtend imm .<. 0x80010000)
     .&. (range @1 @0 (s.opA + signExtend imm) .==. 0)) then
     dataMemWrite mem width (s.opA + signExtend imm) (s.opB)
   else
+    trap s csrUnit (Exception exc_storeAMOAccessFault)
+
+memWrite_1 :: State -> MemIn -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
+memWrite_1 s memIn csrUnit imm width = do
+  memIn.addr <== s.opA + signExtend imm
+  memIn.request <== 1
+  memIn.write_memIn <== 1
+  memIn.width_memIn <== width
+  memIn.value_memIn <== s.opB
+
+memWrite_2 :: State -> MemOut -> CSRUnit -> Action ()
+memWrite_2 s memOut csrUnit = do
+  when (isNone (memOut.value_memOut)) do
+    display "memwrite 2 error"
     trap s csrUnit (Exception exc_storeAMOAccessFault)
 
 fence :: State -> Bit 4 -> Bit 4 -> Bit 4 -> Action ()
@@ -164,16 +200,32 @@ csrrw s csrUnit csr = do
     assume so for now
 -}
 -- makePebbles :: Bool -> Stream (Bit 8) -> Module (Stream (Bit 8))
-makePebbles :: Bool -> Stream (Bit 8) -> RVFI_DII_In -> Module (RVFI_DII_Out)
+makePebbles :: Bool -> RVFI_DII_In -> Module (RVFI_DII_Out)
 --makePebbles :: Bool -> Stream (Bit 8) -> Stream (Bit 32)-> Module (Stream (Bit 8))
 -- makePebbles sim uartIn = do
-makePebbles sim uartIn dii_in = do
+makePebbles sim dii_in = do
   -- Tightly-coupled data memory
   -- TODO can i replace this with a . operator?
   --let uartIn = uartInput dii_in
   let insnIn = insnInput dii_in
+  let uartIn = uartInput dii_in
+
+  memAddr <- makeWire 0
+  memRequest <- makeWire 0
+  memWrite_memIn <- makeWire 0
+  memWidth_memIn <- makeWire 0
+  memValue_memIn <- makeWire 0
+
+  let memInput = MemIn {
+    addr = memAddr,
+    request = memRequest,
+    write_memIn = memWrite_memIn,
+    width_memIn = memWidth_memIn,
+    value_memIn = memValue_memIn
+  }
 
   mem <- makeDataMem sim
+  memOutput <- makeDataMemCore sim memInput
 
   -- CSR unit
   (uartOut, csrUnit) <- makeCSRUnit uartIn
@@ -205,8 +257,8 @@ makePebbles sim uartIn dii_in = do
         , "imm[11] imm[9:4] <5> <5> 110 imm[3:0] imm[10] 1100011" ==> bltu s
         , "imm[11] imm[9:4] <5> <5> 101 imm[3:0] imm[10] 1100011" ==> bge s
         , "imm[11] imm[9:4] <5> <5> 111 imm[3:0] imm[10] 1100011" ==> bgeu s
-        , "imm[11:0] <5> <3> <5> 0000011" ==> memRead_1 s mem csrUnit
-        , "imm[11:5] <5> <5> 0 w<2> imm[4:0] 0100011" ==> memWrite s mem csrUnit
+        , "imm[11:0] <5> <1> w<2> <5> 0000011" ==> memRead_1 s memInput csrUnit
+        , "imm[11:5] <5> <5> 0 w<2> imm[4:0] 0100011" ==> memWrite_1 s memInput csrUnit
         , "fm[3:0] pred[3:0] succ[3:0] <5> 000 <5> 0001111" ==> fence s
         , "000000000000 <5> 000 <5> 1110011" ==> ecall s csrUnit
         , "000000000001 <5> 000 <5> 1110011" ==> ebreak s csrUnit
@@ -215,14 +267,23 @@ makePebbles sim uartIn dii_in = do
 
   -- Pre-execute rules
   let preExecute s =
-        [ "<12> <5> <3> <5> 0000011" ==> memRead_0 s ]
+        [ "<12> <5> <3> <5> 0000011" ==> memRead_0 s
+        ]
 
   -- Post-execute rules
   let postExecute s =
-        [ "imm[11:0] <5> u<1> w<2> <5> 0000011" ==> memRead_2 s mem ]
+        [ "imm[11:0] <5> u<1> w<2> <5> 0000011" ==> memRead_2 s memOutput csrUnit
+        , "<7> <5> <5> 0 <2> <5> 0100011" ==> memWrite_2 s memOutput csrUnit
+        ]
 
   -- CPU pipeline
-  rvfi_dii_data <-  makeCPUPipeline sim (Config { srcA = range @19 @15 , srcB = range @24 @20 , dst  = range @11 @7 , preExecRules = preExecute , execRules = execute , postExecRules = postExecute }) insnIn
+  rvfi_dii_data <-  makeCPUPipeline sim (Config { srcA = range @19 @15,
+                                                  srcB = range @24 @20,
+                                                  dst  = range @11 @7,
+                                                  preExecRules = preExecute,
+                                                  execRules = execute,
+                                                  postExecRules = postExecute
+                                                }) insnIn
 
 
   return $ RVFI_DII_Out {uart_output = uartOut, rvfi_dii_data = rvfi_dii_data}

@@ -67,23 +67,6 @@ double sc_time_stamp () {
   return main_time;
 }
 
-/*
-int main(int argc, char** argv) {
-  Verilated::commandArgs(argc, argv);
-  top = new VPebbles;
-  while (!Verilated::gotFinish()) {
-    top->clock = 0;
-    top->eval();
-
-    top->in_1_peek = 0x10008093;
-
-    top->clock = 1;
-    top->eval();
-    main_time++;
-  }
-  top->final(); delete top; return 0;
-}*/
-
 int main(int argc, char** argv, char** env) {
 
     if (argc != 3) {
@@ -187,14 +170,14 @@ int main(int argc, char** argv, char** env) {
             }
             // perform instruction read
             // returns instructions from the DII input from TestRIG
-            //top->int_1_peek = instructions[in_count].dii_insn;
+            //top->int_peek = instructions[in_count].dii_insn;
 
             // check if an instruction was consumed last cycle
             //std::cout << "reset value: " << (int) top->reset << std::endl;
-            top->in_1_insnInput_canPeek = 0;
-            //if (top->in_1_insnInput_consume_en || top->reset) {
+            top->in_insnInput_canPeek = 0;
+            //if (top->in_insnInput_consume_en || top->reset) {
             //    //std::cout << "core consumed :" << std::to_string(instructions[in_count].dii_insn) << std::endl;
-            //    std::cout << "consume_en: " << (int) top->in_1_insnInput_consume_en << std::endl;
+            //    std::cout << "consume_en: " << (int) top->in_insnInput_consume_en << std::endl;
             //    in_count++;
             //}
 
@@ -206,11 +189,11 @@ int main(int argc, char** argv, char** env) {
             //std::cout << "array size: " << instructions.size() << " in_count: " << in_count << std::endl;
 
             // feed in a new instruction and tell it if it's available
-            top->in_1_insnInput_peek = instructions[in_count].dii_insn;
+            top->in_insnInput_peek = instructions[in_count].dii_insn;
             //std::cout << "setting value: " << std::hex << (int)instructions[in_count].dii_insn << std::endl;
             top->reset = 0;
             if (in_count < received && instructions[in_count].dii_cmd) {
-                top->in_1_insnInput_canPeek = 1;
+                top->in_insnInput_canPeek = 1;
             } else {
                 if (in_count == out_count && in_count < received) {
                     top->reset = 1;
@@ -220,16 +203,17 @@ int main(int argc, char** argv, char** env) {
             }
 
 
-            if (top->out_rvfi_dii_data_flush) {
+            if (top->out_rvfi_dii_data_flush4) {
+                // a flush has occurred in stage 4
+                in_count = out_count + 1;
+            } else if (top->out_rvfi_dii_data_flush) {
                 // a flush has occurred in stage 3
                 // need to go back to the correct instruction
-                // TODO this isn't quite right
-                //      if the first few instructions trap before out_count has increased
-                //      then this will go wrong
-                //in_count -= ((int) top->out_rvfi_dii_data_go2) + ((int) top->in_1_insnInput_canPeek & top->out_rvfi_dii_data_stall_wire);
-                //in_count = out_count + ((int) top->out_rvfi_dii_data_go3) + ((int) top->out_rvfi_dii_data_go4);
+                //std::cout << "values when calculating flush: "
+                //          << "go4: "
+                //          << (int) top->out_rvfi_dii_data_go4
+                //          << std::endl;
                 in_count = out_count + ((int) top->out_rvfi_dii_data_go4) + 1;
-                //top->in_1_insnInput_canPeek = 0;
             }
 
 
@@ -249,9 +233,9 @@ int main(int argc, char** argv, char** env) {
 
             top->eval();
 
-            if (top->in_1_insnInput_consume_en || top->reset) {
+            if (top->in_insnInput_consume_en || top->reset) {
                 //std::cout << "core consumed :" << std::to_string(instructions[in_count].dii_insn) << std::endl;
-                std::cout << "consume_en: " << (int) top->in_1_insnInput_consume_en << std::endl;
+                //std::cout << "consume_en: " << (int) top->in_insnInput_consume_en << std::endl;
                 in_count++;
             }
 

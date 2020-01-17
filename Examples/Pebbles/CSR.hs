@@ -27,6 +27,7 @@ type CSRIdx = Bit 12
 data CSRUnit =
   CSRUnit { mstatus  :: Reg (Bit 32)
           , mepc     :: Reg (Bit 32)
+          , mtvec    :: Reg (Bit 32)
           , mcause   :: Reg (Bit 32)
           , writeCSR :: CSRIdx -> Bit 32 -> Action ()
           , readCSR  :: CSRIdx -> WriteOnly (Bit 32) -> Action ()
@@ -44,24 +45,29 @@ makeCSRUnit uartIn = do
   -- Standard RISCV CSRs
   -- TODO: deal with proper types and legal values
   mstatus :: Reg (Bit 32) <- makeReg 0
+  mtvec   :: Reg (Bit 32) <- makeReg 0
   mepc    :: Reg (Bit 32) <- makeReg 0
   mcause  :: Reg (Bit 32) <- makeReg 0
+  mccsr   :: Reg (Bit 16) <- makeReg 0
 
   -- Handle CSR writes
   let writeCSR csridx x =
         switch csridx [
           0x300 --> mstatus <== x
+        , 0x305 --> mtvec   <== x
         , 0x341 --> mepc    <== x
         , 0x342 --> mcause  <== x
         , 0x800 --> display (cycleCount.val) ": 0x%08x" x
         , 0x801 --> finish
         , 0x803 --> enq uartOut (truncate x)
+        , 0xBC0 --> mccsr   <== truncate x
         ]
 
   -- Handle CSR writes
   let readCSR csridx result =
         switch csridx [
           0x300 --> result <== mstatus.val
+        , 0x305 --> result <== mtvec.val
         , 0x341 --> result <== mepc.val
         , 0x342 --> result <== mcause.val
         , 0x802 --> result <== zeroExtend (uartOut.notFull)
@@ -72,6 +78,7 @@ makeCSRUnit uartIn = do
 
   return (uartOut.toStream, CSRUnit { mstatus  = mstatus
                                     , mepc     = mepc
+                                    , mtvec    = mtvec
                                     , mcause   = mcause
                                     , writeCSR = writeCSR
                                     , readCSR  = readCSR

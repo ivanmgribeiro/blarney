@@ -294,7 +294,7 @@ int main(int argc, char** argv, char** env) {
 
             // if we have a large difference between the number of instructions that have gone in
             // and the number that have come out, something's gone wrong; exit the program
-            if (in_count - out_count > 10 || timeout_counter > 10) {
+            if (in_count - out_count > 10 || timeout_counter > 50) {
                 top->reset = 1;
                 
                 for (int i = out_count; i <= received; i++) {

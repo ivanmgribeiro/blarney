@@ -1,7 +1,7 @@
 include *.mk
 
 different:
-	verilator --cc Pebbles.v -y $(BLARNEY_ROOT)/Verilog --exe Pebbles.cpp
+	verilator --cc Pebbles.v -I../cheri-cap-lib -y $(BLARNEY_ROOT)/Verilog --exe Pebbles.cpp
 	# verilator --cc Pebbles.v -y $(BLARNEY_ROOT)/Verilog --exe Pebbles.cpp
 	make -j -C obj_dir/ -f VPebbles.mk VPebbles
 	cp obj_dir/VPebbles .

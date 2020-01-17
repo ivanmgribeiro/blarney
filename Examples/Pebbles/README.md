@@ -59,3 +59,8 @@ The core includes a built-in UART interface, accessible via CSRs.  For
 an example program, take a look at the [boot loader](Boot/main.c),
 i.e.  the program that resides in instruction memory at startup --
 this particular boot loader doesn't do much boot loading yet.
+
+SCRATCH BRANCH NOTE:
+This requires cheri-cap-lib. CHERIBlarneyWrappers.hs should be placed
+in the same directory as Pebbles.hs, and the compiled .v files should
+be left in ./cheri-cap-lib

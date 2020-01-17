@@ -6,6 +6,8 @@ import Blarney
 -- Pebbles imports
 import CSR
 import Pipeline
+-- TODO remove this
+import CHERIBlarneyWrappers
 
 type ExceptionCode = Bit 31
 
@@ -53,5 +55,10 @@ toCause (Interrupt i) = 0b1 # i
 trap :: State -> CSRUnit -> TrapCode -> Action ()
 trap s csr c = do
   csr.mcause <== toCause c
-  s.pc <== csr.mepc.val
+  --s.pc <== csr.mepc.val
+  s.pc <== s.mtcc.val.getAddr
+  -- TODO move this elsewhere
+  s.pcc <== s.mtcc.val
+  csr.mepc <== s.pc.val
+  s.mepcc <== s.pcc.val
   s.exc <== 1

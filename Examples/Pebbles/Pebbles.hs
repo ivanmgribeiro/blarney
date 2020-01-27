@@ -14,6 +14,8 @@ import DataMem
 import Pipeline
 import CHERITrap
 
+import InstrMem
+
 -- RVFI imports
 import RVFI_DII
 
@@ -43,7 +45,15 @@ lui :: State -> Bit 20 -> Action ()
 lui s imm = s.result <== signExtend (imm # (0 :: Bit 12))
 
 auipc :: State -> Bit 20 -> Action ()
-auipc s imm = s.result <== s.pc.val + (imm # (0 :: Bit 12))
+auipc s imm =
+  if s.pcc.val.getFlags then do
+    let res = (s.pcc.val.setOffset) (s.pcc.val.getOffset + imm # (0 :: Bit 12))
+    if at @93 res then
+      s.resultCap <== lower res
+    else
+      display "pcc has been made unrepresentable - this should never happen"
+  else
+    s.result <== s.pc.val + (imm # (0 :: Bit 12))
 
 add :: State -> Action ()
 add s = s.result <== s.opA + s.opB
@@ -128,70 +138,151 @@ bgeu s imm = do
 memRead_0 :: State -> Action ()
 memRead_0 s = s.late <== 1
 
-memRead_1_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Action ()
-memRead_1_old s mem csrUnit imm =
---  if (((s.opA + signExtend imm) .>=. 0x80000000) .&. ((s.opA + signExtend imm) .<. 0x80010000)
---     .&. (slice @1 @0 (s.opA + signExtend imm) .==. 0)) then
-    dataMemRead mem (s.opA + signExtend imm)
-    --display (slice @1 @0 (s.opA + signExtend imm))
---  else
---    trap s csrUnit (Exception exc_loadAccessFault)
-
-memRead_2_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Bit 1 -> Bit 2 -> Action ()
-memRead_2_old s mem csrUnit imm unsigned width =
-  --display "read memory value: " $ readMux mem (s.opA + signExtend imm) width unsigned
-  --case res of
-  --  (Left memData) -> s.result <== memData
-  --  (Right resp) -> do
-  --    trap s csrUnit (Exception exc_loadAccessFault)
-  --    display "tried to read memory out of bounds"
-  --where res = readMux mem (s.opA + signExtend imm) width unsigned
-  s.result <== 0 # (readMux mem (s.opA + signExtend imm) width unsigned)
+--memRead_1_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Action ()
+--memRead_1_old s mem csrUnit imm =
+----  if (((s.opA + signExtend imm) .>=. 0x80000000) .&. ((s.opA + signExtend imm) .<. 0x80010000)
+----     .&. (slice @1 @0 (s.opA + signExtend imm) .==. 0)) then
+--    dataMemRead mem (s.opA + signExtend imm)
+--    --display (slice @1 @0 (s.opA + signExtend imm))
+----  else
+----    trap s csrUnit (Exception exc_loadAccessFault)
+--
+--memRead_2_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Bit 1 -> Bit 2 -> Action ()
+--memRead_2_old s mem csrUnit imm unsigned width =
+--  --display "read memory value: " $ readMux mem (s.opA + signExtend imm) width unsigned
+--  --case res of
+--  --  (Left memData) -> s.result <== memData
+--  --  (Right resp) -> do
+--  --    trap s csrUnit (Exception exc_loadAccessFault)
+--  --    display "tried to read memory out of bounds"
+--  --where res = readMux mem (s.opA + signExtend imm) width unsigned
+--  s.result <== 0 # (readMux mem (s.opA + signExtend imm) width unsigned)
 
 memRead_1 :: State -> MemIn -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
 memRead_1 s memIn csrUnit imm width = do
+  --display "memRead_1"
+  let authCap = if s.pcc.val.getFlags then s.opACap else s.ddc.val
+  let addrOffset = if s.pcc.val.getFlags then 0 else s.opA
   memIn <== MemReq {
-    memReqAddr = s.opA + signExtend imm
+    memReqCap = authCap
+  , memReqAddr = authCap.getAddr + signExtend imm + addrOffset
   , memReqWrite = 0
   , memReqWidth = width
   , memReqValue = 0
+  , memReqTag = 0
   }
 
+
 memRead_2 :: State -> MemResp -> CSRUnit -> Bit 12 -> Bit 1 -> Bit 2 -> Action ()
-memRead_2 s memResp csrUnit imm unsigned width =
-  if (isSome (memResp.memRespValue)) then do
-    let res = memResp.memRespValue.val
-    let resSigned = if (width .==. 2) then
-                      res
-                    else if (width .==. 1) then
-                      if unsigned then res else signExtend (slice @15 @0 res)
-                    else
-                      if unsigned then res else signExtend (slice @7 @0 res)
-    s.result <== resSigned
+memRead_2 s memResp csrUnit imm unsigned width = do
+  --display "memRead_2"
+  if (memResp.memRespErr.inv) then do
+    if (width .==. 3) then
+      s.resultCap <== fromMem (memResp.memRespTag # memResp.memRespValue)
+    else do
+      let res :: Bit 32 = lower (memResp.memRespValue)
+      let resSigned = if (width .==. 2) then
+                        res
+                      else if (width .==. 1) then
+                        if unsigned then res else signExtend (slice @15 @0 res)
+                      else
+                        if unsigned then res else signExtend (slice @7 @0 res)
+      s.result <== resSigned
   else
     trap s csrUnit (Exception exc_loadAccessFault)
 
-memWrite_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
-memWrite_old s mem csrUnit imm width = do
-  if ((s.opA + signExtend imm .>=. 0x80000000) .&. (s.opA + signExtend imm .<. 0x80010000)
-    .&. (slice @1 @0 (s.opA + signExtend imm) .==. 0)) then
-    dataMemWrite mem width (s.opA + signExtend imm) (s.opB)
+cMemRead_0 :: State -> Action ()
+cMemRead_0 s = s.late <== 1
+
+cMemRead_1 :: State -> MemIn -> Bit 1 -> Bit 2 -> Action ()
+cMemRead_1 s memIn ddcRelative width = do
+  -- ddcRelative = 0 means instruction is ddc-relative
+  --display "cMemRead_1"
+  let addr = if ddcRelative.inv then s.ddc.val.getAddr + s.opA else s.opACap.getAddr
+  let authCap = if ddcRelative.inv then s.ddc.val else s.opACap
+  memIn <== MemReq {
+    memReqCap = authCap
+  , memReqAddr = addr
+  , memReqWrite = 0
+  , memReqWidth = lower width
+  , memReqValue = 0
+  , memReqTag = 0
+  }
+
+cMemRead_2 :: State -> MemResp -> CSRUnit -> Bit 1 -> Bit 2 -> Action ()
+cMemRead_2 s memResp csrUnit unsigned width = do
+  --display "cMemRead2"
+  if (memResp.memRespErr.inv) then do
+    if (width .==. 3) then
+      s.resultCap <== fromMem (memResp.memRespTag # memResp.memRespValue)
+    else do
+      let res :: Bit 32 = lower (memResp.memRespValue)
+      let resSigned = if (width .==. 2) then
+                        res
+                      else if (width .==. 1) then
+                        if unsigned then res else signExtend (slice @15 @0 res)
+                      else
+                        if unsigned then res else signExtend (slice @7 @0 res)
+      s.result <== resSigned
   else
-    trap s csrUnit (Exception exc_storeAMOAccessFault)
+    -- TODO set this exception properly
+    cheriTrap s csrUnit (cheri_exc_permitLoadViolation)
+
+
+--memWrite_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
+--memWrite_old s mem csrUnit imm width = do
+--  if ((s.opA + signExtend imm .>=. 0x80000000) .&. (s.opA + signExtend imm .<. 0x80010000)
+--    .&. (slice @1 @0 (s.opA + signExtend imm) .==. 0)) then
+--    dataMemWrite mem width (s.opA + signExtend imm) (s.opB)
+--  else
+--    trap s csrUnit (Exception exc_storeAMOAccessFault)
 
 memWrite_1 :: State -> MemIn -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
 memWrite_1 s memIn csrUnit imm width = do
+  --display "memWrite_1"
+  let authCap = if s.pcc.val.getFlags then s.opACap else s.ddc.val
+  let addrOffset = if s.pcc.val.getFlags then 0 else s.opA
+  let writeData = if width .==. 3 then toMem (s.opBCap) else zeroExtend (s.opB)
   memIn <== MemReq {
-    memReqAddr = s.opA + signExtend imm
+    memReqCap = authCap
+  , memReqAddr = authCap.getAddr + signExtend imm + addrOffset
   , memReqWrite = 1
   , memReqWidth = width
-  , memReqValue = s.opB
+  , memReqValue = lower writeData
+  , memReqTag = upper writeData
   }
 
 memWrite_2 :: State -> MemResp -> CSRUnit -> Action ()
 memWrite_2 s memResp csrUnit = do
-  when (isNone (memResp.memRespValue)) do
+  --display "memWrite_2"
+  when (memResp.memRespErr) do
     trap s csrUnit (Exception exc_storeAMOAccessFault)
+
+
+cMemWrite_1 :: State -> MemIn -> Bit 1 -> Bit 2 -> Action ()
+cMemWrite_1 s memIn ddcRelative width = do
+  -- ddcRelative = 0 means instruction is ddc-relative
+  --display "cMemWrite_1"
+  let addr = if ddcRelative.inv then s.ddc.val.getAddr + s.opA else s.opACap.getAddr
+  let authCap = if ddcRelative.inv then s.ddc.val else s.opACap
+  let writeData = if width .==. 3 then toMem (s.opBCap) else zeroExtend (s.opB)
+  memIn <== MemReq {
+    memReqCap = authCap
+  , memReqAddr = addr
+  , memReqWrite = 1
+  , memReqWidth = lower width
+  , memReqValue = lower writeData
+  , memReqTag = upper writeData
+  }
+
+cMemWrite_2 :: State -> MemResp -> CSRUnit -> Action ()
+cMemWrite_2 s memResp csrUnit = do
+  --display "cMemWrite_2"
+  when (memResp.memRespErr) do
+    cheriTrap s csrUnit (cheri_exc_permitStoreViolation)
+
+--cMemWrite_2 :: State -> MemIn -> CSRUnit -> Bit 3 -> Bit 1 -> Action ()
+--cMemWrite s memIn csrUnit width ddcRelative
 
 fence :: State -> Bit 4 -> Bit 4 -> Bit 4 -> Action ()
 fence s fm pred succ = display "fence not implemented"
@@ -210,56 +301,56 @@ csrrw s csrUnit csr = do
 
 cGetPerms :: State -> Action ()
 cGetPerms s = do
-  display "cGetPerms"
+  --display "cGetPerms"
   s.result <== zeroExtend (s.opACap.getPerms)
 
 cGetType   :: State -> Action ()
 cGetType s = do
-  display "cGetType"
+  --display "cGetType"
   let res = s.opACap.getType
   let resExtend = if res .>=. 12 then signExtend res else zeroExtend res
-  --display $ res
+  ----display $ res
   s.result <== resExtend
 
 cGetBase   :: State -> Action ()
 cGetBase s = do
-  display "cGetBase"
+  --display "cGetBase"
   s.result <== s.opACap.getBase
 
 cGetLen    :: State -> Action ()
 cGetLen s = do
-  display "cGetLen"
+  --display "cGetLen"
   let len = s.opACap.getLength
-  s.result <== if index @32 len then inv 0 else lower len
+  s.result <== if at @32 len then inv 0 else lower len
 
 cGetTag    :: State -> Action ()
 cGetTag s = do
-  display "cGetTag"
+  --display "cGetTag"
   s.result <== zeroExtend (s.opACap.isValidCap)
 
 cGetSealed :: State -> Action ()
 cGetSealed s = do
-  display "cGetSealed"
+  --display "cGetSealed"
   s.result <== zeroExtend (s.opACap.isSealed)
 
 cGetOffset :: State -> Action ()
 cGetOffset s = do
-  display "cGetOffset"
+  --display "cGetOffset"
   s.result <== s.opACap.getOffset
 
 cGetFlags  :: State -> Action ()
 cGetFlags s = do
-  display "cGetFlags"
+  --display "cGetFlags"
   s.result <== zeroExtend (s.opACap.getFlags)
 
 cGetAddr   :: State -> Action ()
 cGetAddr s = do
-  display "cGetAddr"
+  --display "cGetAddr"
   s.result <== s.opACap.getAddr
 
 cSeal           :: State -> CSRUnit -> Action ()
 cSeal s csrUnit = do
-  display "cSeal"
+  --display "cSeal"
   let newCap = (s.opACap.setType) (lower (s.opBCap.getAddr))
   if s.opACap.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
@@ -270,13 +361,14 @@ cSeal s csrUnit = do
   else if s.opBCap.isSealed then
     cheriTrap s csrUnit cheri_exc_sealViolation
   -- TODO make this 7 a constant elsewhere
-  else if (index @7 (s.opBCap.getPerms)).inv then
+  else if (at @7 (s.opBCap.getPerms)).inv then
     cheriTrap s csrUnit cheri_exc_permitSealViolation
   else if s.opBCap.getAddr .<. s.opBCap.getBase then
     cheriTrap s csrUnit cheri_exc_lengthViolation
   else if zeroExtend (s.opBCap.getAddr) .>=. s.opBCap.getTop then
     cheriTrap s csrUnit cheri_exc_lengthViolation
-  else if s.opBCap.getAddr .>=. 0xc then
+  -- TODO this might be the wrong max OTYPE
+  else if s.opBCap.getAddr .>. 0xc then
     cheriTrap s csrUnit cheri_exc_lengthViolation
   -- TODO RVBS and the sail definitions have a representability check here
   -- does this need it as well? the wrapper only has 93 bits
@@ -287,7 +379,7 @@ cSeal s csrUnit = do
 
 cUnseal         :: State -> CSRUnit -> Action ()
 cUnseal s csrUnit = do
-  display "cUnseal"
+  --display "cUnseal"
   if s.opACap.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
   else if s.opBCap.isValidCap.inv then
@@ -299,14 +391,14 @@ cUnseal s csrUnit = do
   else if s.opBCap.getAddr .!=. zeroExtend (s.opACap.getType) then
     cheriTrap s csrUnit cheri_exc_typeViolation
   -- TODO replace this with a constant
-  else if (index @10 (s.opBCap.getPerms)).inv then
+  else if (at @10 (s.opBCap.getPerms)).inv then
     cheriTrap s csrUnit cheri_exc_unsealViolation
   else if s.opBCap.getAddr .<. s.opBCap.getBase then
     cheriTrap s csrUnit cheri_exc_lengthViolation
   else if zeroExtend (s.opBCap.getAddr) .>=. s.opBCap.getTop then
     cheriTrap s csrUnit cheri_exc_lengthViolation
   else do
-    let newCap = range @92 @0 ((s.opACap.setType) (-1))
+    let newCap = slice @92 @0 ((s.opACap.setType) (-1))
     let oldPerms = newCap.getPerms
     -- TODO set global perm
     let newCapWithPerms = (newCap.setPerms) (oldPerms)
@@ -315,7 +407,7 @@ cUnseal s csrUnit = do
 
 cAndPerm        :: State -> CSRUnit -> Action ()
 cAndPerm s csrUnit = do
-  display "cAndPerm"
+  --display "cAndPerm"
   if s.opACap.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
   else if s.opACap.isSealed then
@@ -325,7 +417,7 @@ cAndPerm s csrUnit = do
 
 cSetFlags       :: State -> CSRUnit -> Action ()
 cSetFlags s csrUnit = do
-  display "cSetFlags"
+  --display "cSetFlags"
   if s.opACap.isValidCap .&. s.opACap.isSealed then
     cheriTrap s csrUnit cheri_exc_sealViolation
   else
@@ -333,45 +425,45 @@ cSetFlags s csrUnit = do
 
 cSetOffset      :: State -> CSRUnit -> Action ()
 cSetOffset s csrUnit = do
-  display "cSetOffset"
+  --display "cSetOffset"
   if s.opACap.isValidCap .&. s.opACap.isSealed then
     cheriTrap s csrUnit cheri_exc_sealViolation
   else do
     let res = (s.opACap.setOffset) (s.opB)
-    s.resultCap <== if index @93 res then lower res else nullWithAddr (s.opACap.getBase + s.opB)
+    s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opACap.getBase + s.opB)
 
 cSetAddr        :: State -> CSRUnit -> Action ()
 cSetAddr s csrUnit = do
-  display "cSetAddr"
+  --display "cSetAddr"
   if s.opACap.isValidCap .&. s.opACap.isSealed then do
     cheriTrap s csrUnit cheri_exc_sealViolation
   else do
     let res = (s.opACap.setAddr) (s.opB)
-    s.resultCap <== if index @93 res then lower res else nullWithAddr (s.opB)
+    s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opB)
 
 cIncOffset      :: State -> CSRUnit -> Action ()
 cIncOffset s csrUnit = do
-  display "cIncOffset"
+  --display "cIncOffset"
   if s.opACap.isValidCap .&. s.opACap.isSealed then
     cheriTrap s csrUnit cheri_exc_sealViolation
   else do
     let res = (s.opACap.setOffset) (s.opACap.getOffset + s.opB)
-    s.resultCap <== if index @93 res then lower res else nullWithAddr (s.opACap.getAddr + s.opB)
+    s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opACap.getAddr + s.opB)
 
 
 cIncOffsetImm   :: State -> CSRUnit -> Bit 12 -> Action ()
 cIncOffsetImm s csrUnit imm = do
-  display "cIncOffsetImm"
+  --display "cIncOffsetImm"
   if s.opACap.isValidCap .&. s.opACap.isSealed then
     cheriTrap s csrUnit cheri_exc_sealViolation
   else do
     let res = (s.opACap.setOffset) (s.opACap.getOffset + signExtend imm)
-    s.resultCap <== if index @93 res then lower res else nullWithAddr (s.opACap.getAddr + signExtend imm)
+    s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opACap.getAddr + signExtend imm)
 
 
 cSetBounds      :: State -> CSRUnit -> Action ()
 cSetBounds s csrUnit = do
-  display "cSetBounds"
+  --display "cSetBounds"
   if s.opACap.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
   else if s.opACap.isSealed then
@@ -385,7 +477,7 @@ cSetBounds s csrUnit = do
 
 cSetBoundsExact :: State -> CSRUnit -> Action ()
 cSetBoundsExact s csrUnit = do
-  display "cSetBoundsExact"
+  --display "cSetBoundsExact"
   let newCap = (s.opACap.setBounds) (s.opB)
   if s.opACap.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
@@ -395,7 +487,7 @@ cSetBoundsExact s csrUnit = do
     cheriTrap s csrUnit cheri_exc_lengthViolation
   else if zeroExtend (s.opACap.getAddr) + zeroExtend (s.opB) .>. s.opACap.getTop then
     cheriTrap s csrUnit cheri_exc_lengthViolation
-  else if inv (index @93 newCap) then
+  else if inv (at @93 newCap) then
     -- TODO check if this if should be inverted
     cheriTrap s csrUnit cheri_exc_representabilityViolation
   else
@@ -403,7 +495,7 @@ cSetBoundsExact s csrUnit = do
 
 cSetBoundsImm   :: State -> CSRUnit -> Bit 12 -> Action ()
 cSetBoundsImm s csrUnit imm = do
-  display "cSetBoundsImm"
+  --display "cSetBoundsImm"
   let newCap = (s.opACap.setBounds) (zeroExtend imm)
   if s.opACap.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
@@ -418,15 +510,16 @@ cSetBoundsImm s csrUnit imm = do
 
 cClearTag       :: State -> Action ()
 cClearTag s = do
-  display "cClearTag"
+  --display "cClearTag"
   s.resultCap <== (s.opACap.setValidCap) 0
 
 cBuildCap       :: State -> CSRUnit -> Action ()
 cBuildCap s csrUnit = do
-  display "cBuildCap"
+  --display "cBuildCap"
   let aDDC = if s.opAAddr .==. 0 then s.ddc.val else s.opACap
-  display "valid: " (aDDC.isValidCap)
-  -- TODO make this use DDC when op A is register 0
+  --display "input cap a: " (aDDC)
+  --display "input cap b: " (s.opBCap)
+  --display "valid: " (aDDC.isValidCap)
   if (aDDC.isValidCap).inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
   else if aDDC.isSealed then
@@ -449,7 +542,7 @@ cBuildCap s csrUnit = do
 
 cCopyType       :: State -> CSRUnit -> Action ()
 cCopyType s csrUnit = do
-  display "cCopyType"
+  --display "cCopyType"
   if s.opACap.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
   else if s.opACap.isSealed then
@@ -466,7 +559,7 @@ cCopyType s csrUnit = do
 
 cCSeal           :: State -> CSRUnit -> Action ()
 cCSeal s csrUnit = do
-  display "cCSeal"
+  --display "cCSeal"
   let newCap = (s.opACap.setType) (lower (s.opBCap.getAddr))
   if s.opACap.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
@@ -479,7 +572,7 @@ cCSeal s csrUnit = do
   else if s.opBCap.isSealed then
     cheriTrap s csrUnit cheri_exc_sealViolation
   -- TODO make this 7 a constant elsewhere
-  else if (index @7 (s.opBCap.getPerms)).inv then
+  else if (at @7 (s.opBCap.getPerms)).inv then
     cheriTrap s csrUnit cheri_exc_permitSealViolation
   else if s.opBCap.getAddr .<. s.opBCap.getBase then
     cheriTrap s csrUnit cheri_exc_lengthViolation
@@ -495,7 +588,7 @@ cCSeal s csrUnit = do
 
 cToPtr   :: State -> CSRUnit -> Action ()
 cToPtr s csrUnit = do
-  display "cToPtr"
+  --display "cToPtr"
   let bDDC = if s.opBAddr .==. 0 then s.ddc.val else s.opBCap
   if bDDC.isValidCap.inv then
     cheriTrap s csrUnit cheri_exc_tagViolation
@@ -507,7 +600,7 @@ cToPtr s csrUnit = do
 
 cFromPtr :: State -> CSRUnit -> Action ()
 cFromPtr s csrUnit = do
-  display "cFromPtr"
+  --display "cFromPtr"
   let aDDC = if s.opAAddr .==. 0 then s.ddc.val else s.opACap
   if s.opB .==. 0 then
     s.resultCap <== nullCap
@@ -518,7 +611,7 @@ cFromPtr s csrUnit = do
   else do
     let res = (aDDC.setOffset) (s.opB)
     -- TODO replace 93 with a constant
-    if index @93 res then
+    if at @93 res then
       s.resultCap <== lower res
     else
       s.resultCap <== nullWithAddr (aDDC.getBase + s.opB)
@@ -529,21 +622,71 @@ cFromPtr s csrUnit = do
 
 cSub     :: State -> Action ()
 cSub s = do
-  display "cSub"
+  --display "cSub"
   s.result <== (s.opACap.getAddr) - (s.opBCap.getAddr)
 
 cMove    :: State -> Action ()
 cMove s = do
-  display "cMove"
+  --display "cMove"
   s.resultCap <== s.opACap
 
---cJALR :: State -> CSRUnit -> Action ()
---cCall :: State -> CSRUnit -> Action ()
+-- TODO check that target address is aligned properly
+-- (can't have 2-byte aligned instructions)
+cJALR :: State -> CSRUnit -> Action ()
+cJALR s csrUnit = do
+  if s.opACap.isValidCap.inv then
+    cheriTrap s csrUnit cheri_exc_tagViolation
+  else if s.opACap.isSealed then
+    cheriTrap s csrUnit cheri_exc_sealViolation
+  -- TODO replace this with a constant
+  else if (at @1 (s.opACap.getPerms)).inv then
+    cheriTrap s csrUnit cheri_exc_permitExecuteViolation
+  else if s.opACap.getAddr .<. s.opACap.getBase then
+    cheriTrap s csrUnit cheri_exc_lengthViolation
+  else if zeroExtend (s.opACap.getAddr + 4) .>. s.opACap.getTop then
+    cheriTrap s csrUnit cheri_exc_lengthViolation
+  else do
+    s.resultCap <== lower ((s.pcc.val.setOffset) (s.pc.val + 4))
+    -- TODO representability checks
+    s.pcc <== lower ((s.opACap.setOffset) (slice @31 @1 (s.opACap.getOffset) # 0))
+
+-- TODO check that target address is aligned properly
+-- (can't have 2-byte aligned instructions)
+cCall :: State -> CSRUnit -> Action ()
+cCall s csrUnit = do
+  let newPC = s.opACap.getAddr
+  if s.opACap.isValidCap.inv then
+    cheriTrap s csrUnit cheri_exc_tagViolation
+  else if s.opBCap.isValidCap.inv then
+    cheriTrap s csrUnit cheri_exc_tagViolation
+  else if s.opACap.isSealed.inv then
+    cheriTrap s csrUnit cheri_exc_sealViolation
+  else if s.opBCap.isSealed.inv then
+    cheriTrap s csrUnit cheri_exc_sealViolation
+  else if s.opACap.getType .!=. s.opBCap.getType then
+    cheriTrap s csrUnit cheri_exc_typeViolation
+  -- TODO replace these with constants
+  else if (at @8 (s.opACap.getPerms)).inv then
+    cheriTrap s csrUnit cheri_exc_permitCCallViolation
+  else if (at @8 (s.opBCap.getPerms)).inv then
+    cheriTrap s csrUnit cheri_exc_permitCCallViolation
+  else if (at @1 (s.opACap.getPerms)).inv then
+    cheriTrap s csrUnit cheri_exc_permitExecuteViolation
+  else if at @1 (s.opBCap.getPerms) then
+    cheriTrap s csrUnit cheri_exc_permitExecuteViolation
+  else if newPC .<. s.opACap.getBase then
+    cheriTrap s csrUnit cheri_exc_lengthViolation
+  else if zeroExtend (newPC + 4) .>. s.opACap.getTop then
+    cheriTrap s csrUnit cheri_exc_lengthViolation
+  else do
+    s.resultCap <== (s.opBCap.setType) (-1)
+    s.pcc <== (s.opACap.setType) (-1)
+
 
 cTestSubset :: State -> Action ()
 cTestSubset s = do
   let aDDC = if s.opAAddr .==. 0 then s.ddc.val else s.opACap
-  display "cTestSubset"
+  --display "cTestSubset"
   s.result <== if aDDC.isValidCap .!=. s.opBCap.isValidCap then
                  0
                else if s.opBCap.getBase .<. aDDC.getBase then
@@ -560,7 +703,7 @@ cTestSubset s = do
 -- into their own file?
 cSpecialRW :: State -> CSRUnit -> Bit 5 -> Action ()
 cSpecialRW s csrUnit id = do
-  display "cSpecialRW"
+  --display "cSpecialRW"
   if id .==. 0 then -- PCC
     if s.opAAddr .!=. 0 then
       -- trying to write to pcc with csprw - illegal
@@ -574,17 +717,23 @@ cSpecialRW s csrUnit id = do
   -- MTCC
   else if id .==. 28 then
     -- TODO replace 11 with a constant
-    if (index @11 (s.pcc.val.getPerms)).inv then
+    if (at @11 (s.pcc.val.getPerms)).inv then
       cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
     else do
       s.resultCap <== s.mtcc.val
       when (s.opAAddr .!=. 0) do
-        s.mtcc <== s.opACap
+        if s.opACap.isSealed then do
+          s.mtcc <== nullWithAddr ((slice @31 @2 (s.opACap.getAddr)) # 0)
+          csrUnit.mtvec <== (slice @31 @2 (s.opACap.getOffset)) # 0
+        else do
+          -- TODO ask about this. can this ever make mtcc non-exact?
+          -- and if so, what do we do?
+          s.mtcc <== lower ((s.opACap.setOffset) ((slice @31 @2 (s.opACap.getOffset)) # 0))
+          csrUnit.mtvec <== (slice @31 @2 (s.opACap.getOffset)) # 0
         -- TODO mtvec should probably be written elsewhere
-        csrUnit.mtvec <== s.opACap.getAddr
   -- MTDC
   else if id .==. 29 then
-    if (index @11 (s.pcc.val.getPerms)).inv then
+    if (at @11 (s.pcc.val.getPerms)).inv then
       cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
     else do
       s.resultCap <== s.mtdc.val
@@ -592,7 +741,7 @@ cSpecialRW s csrUnit id = do
         s.mtdc <== s.opACap
   -- MSCRATCHC
   else if id .==. 30 then
-    if (index @11 (s.pcc.val.getPerms)).inv then
+    if (at @11 (s.pcc.val.getPerms)).inv then
       cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
     else do
       s.resultCap <== s.mscratchc.val
@@ -600,26 +749,29 @@ cSpecialRW s csrUnit id = do
         s.mscratchc <== s.opACap
   -- MEPCC
   else if id .==. 31 then
-    if (index @11 (s.pcc.val.getPerms)).inv then
+    if (at @11 (s.pcc.val.getPerms)).inv then
       cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
     else do
+      --display "reading mepcc returned " (s.mepcc.val)
+      --display "in pcc terms: " (s.mepcc.val.getOffset)
       s.resultCap <== s.mepcc.val
       when (s.opAAddr .!=. 0) do
-        s.mepcc <== s.opACap
-        csrUnit.mepc <== s.opACap.getAddr
+        --display "setting mepcc to " (s.opACap)
+        --display "in pcc terms " (s.opACap.getOffset)
+        let res = (s.opACap.setOffset) ((slice @31 @1 (s.opACap.getOffset)) # 0)
+        if at @93 res then do
+          s.mepcc <== lower res
+          csrUnit.mepc <== (slice @31 @1 (s.opACap.getOffset)) # 0
+        else
+          display "mepcc was made inexact - this shouldn't happen"
   else
     cheriTrap s csrUnit cheri_exc_setCIDViolation
-
-
-
-
   -- valid ids: 0  - pcc
   --            1  - ddc
   --            28 - mtcc
   --            29 - mtdc
   --            30 - mscratchc
   --            31 - mepcc
-
 
 --cRoundRepresentableLength :: State -> Action()
 --cRepresentableAlignmentMask :: State -> Action ()
@@ -631,14 +783,22 @@ makePebbles sim dii_in = do
   let insnIn = insnInput dii_in
   let uartIn = uartInput dii_in
 
-  memInput :: Wire (MemReq) <- makeWire MemReq {
-    memReqAddr = 0
+  memInput :: MemIn <- makeWire MemReq {
+    memReqCap = 0
+  , memReqAddr = 0
   , memReqWrite = 0
   , memReqWidth = 0
   , memReqValue = 0
+  , memReqTag = 0
   }
 
   memOutput <- makeDataMemCore sim memInput
+
+  instrInput :: InstrIn <- makeWire InstrReq {
+    instrReqCap = 0
+  }
+
+  instrOutput <- makeInstrMem sim True instrInput dii_in
 
   -- CSR unit
   (uartOut, csrUnit) <- makeCSRUnit uartIn
@@ -709,12 +869,15 @@ makePebbles sim dii_in = do
         , "0010010 <5> <5> 000 <5> 1011011" ==> cToPtr s csrUnit
         , "0010011 <5> <5> 000 <5> 1011011" ==> cFromPtr s csrUnit
         , "0010100 <5> <5> 000 <5> 1011011" ==> cSub s
-        , "0011111 01010 <5> 000 <5> 1011011" ==> cMove s
+        , "1111111 01010 <5> 000 <5> 1011011" ==> cMove s
 
-        --, "1111111 01100 <5> 000 <5> 1011011" ==> cJALR s
-        --, "1111110 <5> <5> 000 <5> 1011011" ==> cCall s
+        , "1111111 01100 <5> 000 <5> 1011011" ==> cJALR s csrUnit
+        , "1111110 <5> <5> 000 <5> 1011011" ==> cCall s csrUnit
         , "0100000 <5> <5> 000 <5> 1011011" ==> cTestSubset s
         , "0000001 id[4:0] <5> 000 <5> 1011011" ==> cSpecialRW s csrUnit
+
+        , "1111101 0 ddc<1> <1> w<2> <5> 000 <5> 1011011" ==> cMemRead_1 s memInput
+        , "1111100 <5> <5> 000 0 ddc<1> 0 w<2> 1011011" ==> cMemWrite_1 s memInput
         --, "1111111 01000 <5> 000 <5> 1011011" ==> cRoundRepresentableLength s
         --, "1111111 01001 <5> 000 <5> 1011011" ==> cRepresentableAlignmentMask s
          ]
@@ -722,22 +885,35 @@ makePebbles sim dii_in = do
   -- Pre-execute rules
   let preExecute s =
         [ "<12> <5> <3> <5> 0000011" ==> memRead_0 s
+        , "1111101 0 <4> <5> 000 <5> 1011011" ==> cMemRead_0 s
         ]
 
   -- Post-execute rules
   let postExecute s =
         [ "imm[11:0] <5> u<1> w<2> <5> 0000011" ==> memRead_2 s memOutput csrUnit
+        , "1111101 0 <1> u<1> w<2> <5> 000 <5> 1011011 " ==> cMemRead_2 s memOutput csrUnit
         , "<7> <5> <5> 0 <2> <5> 0100011" ==> memWrite_2 s memOutput csrUnit
+        , "1111100 <5> <5> 000 0 <1> 0 <2> 1011011" ==> cMemWrite_2 s memOutput csrUnit
         ]
 
   -- CPU pipeline
-  rvfi_dii_data <- makeCPUPipeline sim
+  (rvfi_dii_data, dii_instrReq) <- makeCPUPipeline sim
                                    (Config { srcA = slice @19 @15
-                                           , srcB = slice @24 @20
-                                           , dst  = slice @11 @7
-                                           , preExecRules = preExecute
-                                           , execRules = cheriExecute
-                                           , postExecRules = postExecute })
-                                   insnIn
+                                   ,         srcB = slice @24 @20
+                                   ,         dst  = slice @11 @7
+                                   ,         preExecRules = preExecute
+                                   ,         execRules = cheriExecute
+                                   ,         postExecRules = postExecute
+                                   })
+                                   instrOutput
 
-  return $ RVFI_DII_Out {uart_output = uartOut, rvfi_dii_data = rvfi_dii_data}
+  always do
+    instrInput <== InstrReq { instrReqCap = dii_instrReq.rvfi_instrReqCap }
+    when (dii_instrReq.rvfi_instrConsume) do
+      display "consuming " (dii_instrReq.rvfi_instrReqCap.getAddr)
+      insnIn.consume
+
+  return $ RVFI_DII_Out { uart_output = uartOut
+                        , rvfi_dii_data = rvfi_dii_data
+                        , rvfi_dii_consume = dii_instrReq.rvfi_instrConsume
+                        }

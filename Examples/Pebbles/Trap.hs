@@ -55,10 +55,11 @@ toCause (Interrupt i) = 0b1 # i
 trap :: State -> CSRUnit -> TrapCode -> Action ()
 trap s csr c = do
   csr.mcause <== toCause c
-  --s.pc <== csr.mepc.val
-  s.pc <== s.mtcc.val.getAddr
   -- TODO move this elsewhere
-  s.pcc <== s.mtcc.val
+  -- TODO this overlooks the possibility of setting the address to something inexact
+  s.pcc <== lower ((s.mtcc.val.setOffset) (s.mtcc.val.getOffset .&. 0xfffffffc))
   csr.mepc <== s.pc.val
+  --display "setting mepc to value " (s.pc.val)
   s.mepcc <== s.pcc.val
+  --display "setting mepcc to value " (s.pcc.val)
   s.exc <== 1

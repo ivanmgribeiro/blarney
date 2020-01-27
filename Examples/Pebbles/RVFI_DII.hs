@@ -36,6 +36,10 @@ data RVFI_DII_In = RVFI_DII_In { uartInput :: Stream (Bit 8)
 
 data RVFI_DII_Out = RVFI_DII_Out { uart_output :: Stream (Bit 8)
                                  , rvfi_dii_data :: RVFI_DII_Data
+                                 , rvfi_dii_consume :: Bit 1
                                  } deriving (Generic, Interface)
-                                 
+
+data RVFI_DII_InstrReq = RVFI_DII_InstrReq { rvfi_instrReqCap :: Bit 93
+                                           , rvfi_instrConsume :: Bit 1
+                                           }
 

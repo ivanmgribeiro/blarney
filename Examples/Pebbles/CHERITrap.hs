@@ -94,6 +94,8 @@ cheriTrap s csrUnit c = do
   (csrUnit.writeCSR) 0xBC0 (zeroExtend c)
   s.mepcc <== s.pcc.val
   csrUnit.mepc <== s.pc.val
-  s.pc  <== csrUnit.mtvec.val
-  s.pcc <== s.mtcc.val
+  --s.pc  <== csrUnit.mtvec.val
+  s.pcc <== lower ((s.mtcc.val.setOffset) (s.mtcc.val.getOffset .&. 0xfffffffc))
+  display "setting mepc to value " (s.pc.val)
+  display "setting mepcc to value " (s.pcc.val)
   s.exc <== 1

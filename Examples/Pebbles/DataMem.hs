@@ -5,6 +5,8 @@ import Blarney
 import Blarney.RAM
 import Blarney.Option
 
+import CHERIBlarneyWrappers
+
 -- Data memory size in bytes
 type LogDataMemSize = 16
 
@@ -13,23 +15,31 @@ type LogDataMemSize = 16
 memBase = 0x80000000
 memSize = 0x10000
 
--- Implement data memory as four block RAMs
--- (one for each byte of word)
-type DataMem = [RAM (Bit (LogDataMemSize-2)) (Bit 8)]
+-- Implement data memory as eight block RAMs
+-- (one for each byte of double word)
+type DataMem = [RAM (Bit (LogDataMemSize-3)) (Bit 8)]
+
+-- Implement tag memory as a single block ram containing 1 bit per address
+type TagMem = RAM (Bit (LogDataMemSize)) (Bit 1)
 
 -- RV32I memory access width
 type AccessWidth = Bit 2
 
--- TODO do these really need to be Wires?
+-- the memReqCap is used ONLY for providing authorization
 data MemReq = MemReq {
+  memReqCap :: Bit 93,
   memReqAddr :: Bit 32,
   memReqWrite :: Bit 1,
   memReqWidth :: AccessWidth,
-  memReqValue :: Bit 32
+  memReqValue :: Bit 64,
+  memReqTag :: Bit 1
 } deriving (Generic, Bits)
 
 data MemResp = MemResp {
-  memRespValue :: Option (Bit 32)
+  memRespValue :: Bit 64,
+  memRespTag :: Bit 1,
+  memRespErr :: Bit 1,
+  memRespErrCode :: Bit 6
 } deriving (Generic, Bits)
 
 type MemIn = Wire MemReq
@@ -38,27 +48,32 @@ type MemIn = Wire MemReq
 makeDataMemCore :: Bool -> MemIn -> Module MemResp
 makeDataMemCore sim memIn = do
   dataMem :: DataMem <- makeDataMem sim
+  tagMem :: TagMem <- makeRAM
 
   -- information about the pending request
   -- TODO might make more sense to just make a Reg (MemReq) to hold this,
   -- or to use old
   readPending :: Reg (Bit 1) <- makeReg 0
   readPendingWidth :: Reg (AccessWidth) <- makeReg dontCare
-  readPendingAlignment :: Reg (Bit 2) <- makeReg dontCare
+  readPendingAlignment :: Reg (Bit 3) <- makeReg dontCare
   errPending :: Reg (Bit 1) <- makeDReg 0
 
   -- TODO this probably shouldn't be a wire
-  responseData :: Wire (Bit 32) <- makeWire 0
+  responseData :: Wire (Bit 64) <- makeWire 0
+  responseTag :: Wire (Bit 1) <- makeWire 0
 
   always do
-    let addrBottom = slice @1 @0 (memIn.val.memReqAddr)
+    let addrBottom = slice @2 @0 (memIn.val.memReqAddr)
     -- check if the address is unaligned with respect to the memory access width
-    let isUnaligned = if isWordAccess (memIn.val.memReqWidth) then
+    let isUnaligned = if isDoubleAccess (memIn.val.memReqWidth) then
                         addrBottom .!=. 0
+                      else if isWordAccess (memIn.val.memReqWidth) then
+                        slice @1 @0 addrBottom .!=. 0
                       else if isHalfAccess (memIn.val.memReqWidth) then
-                        at @0 (memIn.val.memReqAddr) .!=. 0
+                        at @0 (addrBottom) .!=. 0
                       else
                         0
+    let size = zeroExtend (accessWidthToSize (memIn.val.memReqWidth))
 
     ------------------------------
 
@@ -69,17 +84,35 @@ makeDataMemCore sim memIn = do
     -- read logic part 1
     -- test if memory address is valid and if it is, set the proper
     -- inputs to load the data
-    -- if not, don't request anything and trigger an error
+    -- if not, don't request anything and (memIn.val.memReqAddr)trigger an error
     readPending <== memIn.active .&. memIn.val.memReqWrite.inv
     readPendingWidth <== memIn.val.memReqWidth
     readPendingAlignment <== addrBottom
 
     when (memIn.active .&. memIn.val.memReqWrite.inv) do
+      --display "memory read addr: " (memIn.val.memReqAddr)
       if ((memIn.val.memReqAddr .>=. memBase)
-         .&. (memIn.val.memReqAddr .<. memBase + memSize)
-         .&. (isUnaligned.inv)) then
+         .&. (memIn.val.memReqAddr .<. memBase + memSize - size)
+         .&. (isUnaligned.inv)
+         .&. inv (cheriLoadChecks (memIn.val.memReqCap)
+                                  (memIn.val.memReqAddr)
+                                  (memIn.val.memReqWidth))) then do
         dataMemRead dataMem (memIn.val.memReqAddr)
-      else
+        when (isDoubleAccess (memIn.val.memReqWidth)) do
+          let tagMemAddr = lower (upper (memIn.val.memReqAddr) :: Bit 29)
+          load tagMem tagMemAddr
+      else do
+        --display "errored read, memchecks: " (cheriLoadChecks (memIn.val.memReqCap)
+        --                                                     (memIn.val.memReqAddr)
+        --                                                     (memIn.val.memReqWidth))
+        --display "checkTop: " (memIn.val.memReqAddr .>=. memBase)
+        --display "checkBase: " (memIn.val.memReqAddr .<. memBase + memSize)
+        --display "isUnaligned: " (isUnaligned)
+        --display "cap top: " (memIn.val.memReqCap.getTop)
+        --display "cap base: " (memIn.val.memReqCap.getBase)
+        --display "cap valid: " (memIn.val.memReqCap.isValidCap)
+        --display "cap isSealed: " (memIn.val.memReqCap.isSealed)
+        --display "cap getPerms: " (memIn.val.memReqCap.getPerms)
         errPending <== 1
 
     -- read logic part 2
@@ -89,6 +122,7 @@ makeDataMemCore sim memIn = do
                                (0 # readPendingAlignment.val)
                                (readPendingWidth.val)
                                1
+      responseTag <== out tagMem
 
     -------------------------------
 
@@ -102,74 +136,110 @@ makeDataMemCore sim memIn = do
     -- if not, don't request anything and trigger an error
     when (memIn.active .&. memIn.val.memReqWrite) do
       if ((memIn.val.memReqAddr .>=. memBase)
-         .&. (memIn.val.memReqAddr .<. memBase + memSize)
-         .&. (isUnaligned.inv)) then
+         .&. (memIn.val.memReqAddr .<. memBase + memSize - size)
+         .&. (isUnaligned.inv)
+         .&. inv (cheriStoreChecks (memIn.val.memReqCap)
+                                   (memIn.val.memReqAddr)
+                                   (memIn.val.memReqWidth))) then do
         dataMemWrite dataMem
                      (memIn.val.memReqWidth)
                      (memIn.val.memReqAddr)
                      (memIn.val.memReqValue)
-      else
+        when (isDoubleAccess (memIn.val.memReqWidth)) do
+          let tagMemAddr = lower (upper (memIn.val.memReqAddr) :: Bit 29)
+          store tagMem tagMemAddr (memIn.val.memReqTag)
+      else do
+        --display "errored write, memchecks: " (cheriStoreChecks (memIn.val.memReqCap)
+        --                                                       (memIn.val.memReqAddr)
+        --                                                       (memIn.val.memReqWidth))
+        --display "checkTop: " (memIn.val.memReqAddr .>=. memBase)
+        --display "checkBase: " (memIn.val.memReqAddr .<. memBase + memSize)
+        --display "isUnaligned: " (isUnaligned)
+        --display "cap top: " (memIn.val.memReqCap.getTop)
+        --display "cap base: " (memIn.val.memReqCap.getBase)
+        --display "cap valid: " (memIn.val.memReqCap.isValidCap)
+        --display "cap isSealed: " (memIn.val.memReqCap.isSealed)
+        --display "cap getPerms: " (memIn.val.memReqCap.getPerms)
         errPending <== 1
 
 
   return MemResp {
-    memRespValue = errPending.val ? (none, some (responseData.val))
+    memRespValue = errPending.val ? (0, responseData.val),
+    memRespTag = responseTag.val,
+    memRespErr = errPending.val,
+    memRespErrCode = 1
   }
 
 
 -- Constructor
 makeDataMem :: Bool -> Module DataMem
 makeDataMem sim =
-    sequence [makeRAM | i <- [0..3]]
+    sequence [makeRAM | i <- [0..7]]
   where ext = if sim then ".hex" else ".mif"
 
 -- Constructor
 makeDataMemInit :: Bool -> Module DataMem
 makeDataMemInit sim =
-    sequence [makeRAMInit ("data_" ++ show i ++ ext) | i <- [0..3]]
+    sequence [makeRAMInit ("data_" ++ show i ++ ext) | i <- [0..7]]
   where ext = if sim then ".hex" else ".mif"
 
 
 -- Byte, half-word, or word access?
-isByteAccess, isHalfAccess, isWordAccess :: AccessWidth -> Bit 1
+isByteAccess, isHalfAccess, isWordAccess, isDoubleAccess :: AccessWidth -> Bit 1
 isByteAccess = (.==. 0b00)
 isHalfAccess = (.==. 0b01)
 isWordAccess = (.==. 0b10)
+isDoubleAccess = (.==. 0b11)
+
+accessWidthToSize :: AccessWidth -> Bit 4
+accessWidthToSize width =
+  if width .==. 0 then 1
+  else if width .==. 1 then 2
+  else if width .==. 2 then 4
+  else if width .==. 3 then 8
+  else 0
 
 -- ======================
 -- Writing to data memory
 -- ======================
 
 -- Determine byte enables given access width and address
+-- TODO clean this up
 genByteEnable :: AccessWidth -> Bit 32 -> [Bit 1]
 genByteEnable w addr =
   selectList [
-    isWordAccess w --> [1, 1, 1, 1]
-  , isHalfAccess w --> [a.==.0, a.==.0, a.==.2, a.==.2]
-  , isByteAccess w --> [a.==.0, a.==.1, a.==.2, a.==.3]
+    isDoubleAccess w --> [1 | i <- [0..7]]
+  , isWordAccess w   --> [a.==.0, a.==.0, a.==.0, a.==.0, a.==.4, a.==.4, a.==.4, a.==.4]
+  , isHalfAccess w   --> [a.==.0, a.==.0, a.==.2, a.==.2, a.==.4, a.==.4, a.==.6, a.==.6]
+  , isByteAccess w   --> [a.==.0, a.==.1, a.==.2, a.==.3, a.==.4, a.==.5, a.==.6, a.==.7]
   ]
-  where a :: Bit 2 = truncate addr
+  where a :: Bit 3 = truncate addr
 
 -- Align a write using access width
-writeAlign :: AccessWidth -> Bit 32 -> [Bit 8]
+writeAlign :: AccessWidth -> Bit 64 -> [Bit 8]
 writeAlign w d =
   selectList [
-    isWordAccess w --> [b0, b1, b2, b3]
-  , isHalfAccess w --> [b0, b1, b0, b1]
-  , isByteAccess w --> [b0, b0, b0, b0]
+    isDoubleAccess w --> [b0, b1, b2, b3, b4, b5, b6, b7]
+  , isWordAccess w   --> [b0, b1, b2, b3, b0, b1, b2, b3]
+  , isHalfAccess w   --> [b0, b1, b0, b1, b0, b1, b0, b1]
+  , isByteAccess w   --> [b0, b0, b0, b0, b0, b0, b0, b0]
   ]
   where
     b0 = slice @7 @0 d
     b1 = slice @15 @8 d
     b2 = slice @23 @16 d
     b3 = slice @31 @24 d
+    b4 = slice @39 @32 d
+    b5 = slice @47 @40 d
+    b6 = slice @55 @48 d
+    b7 = slice @63 @56 d
 
 -- Write to data memory
-dataMemWrite :: DataMem -> AccessWidth -> Bit 32 -> Bit 32 -> Action ()
+dataMemWrite :: DataMem -> AccessWidth -> Bit 32 -> Bit 64 -> Action ()
 dataMemWrite dataMem w addr d =
   sequence_
     [ when byteEn do
-        let writeAddr = lower (upper addr :: Bit 30)
+        let writeAddr = lower (upper addr :: Bit 29)
         store mem writeAddr byte
     | (mem, byte, byteEn) <- zip3 dataMem bytes byteEns
     ]
@@ -183,28 +253,61 @@ dataMemWrite dataMem w addr d =
 
 -- Process output of data memory using low address bits,
 -- access width, and unsigned flag.
-readMux :: DataMem -> Bit 32 -> AccessWidth -> Bit 1 -> Bit 32
-readMux dataMem addr w isUnsigned =
+readMux :: DataMem -> Bit 32 -> AccessWidth -> Bit 1 -> Bit 64
+readMux dataMem addr width isUnsigned =
     select [
-      isWordAccess w --> b3 # b2 # b1 # b0
-    , isHalfAccess w --> hExt # h
-    , isByteAccess w --> bExt # b
+      isDoubleAccess width --> b7 # b6 # b5 # b4 # b3 # b2 # b1 # b0
+    , isWordAccess width   --> wExt # w
+    , isHalfAccess width   --> hExt # h
+    , isByteAccess width   --> bExt # b
     ]
   where
-    a = lower addr :: Bit 2
+    a = lower addr :: Bit 3
     b = select [
           a .==. 0 --> b0
         , a .==. 1 --> b1
         , a .==. 2 --> b2
         , a .==. 3 --> b3
+        , a .==. 4 --> b4
+        , a .==. 5 --> b5
+        , a .==. 6 --> b6
+        , a .==. 7 --> b7
         ]
-    h = (at @1 a .==. 0) ? (b1 # b0, b3 # b2)
+    h = select [
+          slice @2 @1 a .==. 0 --> b1 # b0
+        , slice @2 @1 a .==. 1 --> b3 # b2
+        , slice @2 @1 a .==. 2 --> b5 # b4
+        , slice @2 @1 a .==. 3 --> b7 # b6
+        ]
+    w = (at @2 a .==. 0) ? (b3 # b2 # b1 # b0, b7 # b6 # b5 # b4)
     bExt = isUnsigned ? (0, signExtend (at @7 b))
     hExt = isUnsigned ? (0, signExtend (at @15 h))
-    [b0, b1, b2, b3] = map out dataMem
+    wExt = isUnsigned ? (0, signExtend (at @31 w))
+    [b0, b1, b2, b3, b4, b5, b6, b7] = map out dataMem
 
 -- Read from data memory
 dataMemRead :: DataMem -> Bit 32 -> Action ()
 dataMemRead dataMem addr =
     sequence_ [load mem a | mem <- dataMem]
-  where a = lower (upper addr :: Bit 30)
+  where a = lower (upper addr :: Bit 29)
+
+-- TODO ask what happens if i try to access a memory location using an immediate
+-- value that causes the address to become inexact (is this a thing that can even
+-- happen? what about if it's ddc-relative where you add on the rs1 to the address
+-- of ddc? can this make it inexact?)
+cheriLoadChecks :: Bit 93 -> Bit 32 -> AccessWidth -> Bit 1
+cheriLoadChecks cap addr width =
+  (cap.isValidCap.inv)
+  .|. (cap.isSealed)
+  .|. (isDoubleAccess width .&. inv (at @4 (cap.getPerms)))
+  .|. ((at @2 (cap.getPerms)).inv)
+  .|. (addr .<. cap.getBase)
+  .|. (zeroExtend (addr + zeroExtend (accessWidthToSize width)) .>. cap.getTop)
+
+cheriStoreChecks :: Bit 93 -> Bit 32 -> AccessWidth -> Bit 1
+cheriStoreChecks cap addr width =
+  (cap.isValidCap.inv)
+  .|. (cap.isSealed)
+  .|. ((at @3 (cap.getPerms)).inv)
+  .|. (addr .<. cap.getBase)
+  .|. (zeroExtend (addr + zeroExtend (accessWidthToSize width)) .>. cap.getTop)

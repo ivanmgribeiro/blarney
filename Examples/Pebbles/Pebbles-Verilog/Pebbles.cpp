@@ -233,7 +233,7 @@ int main(int argc, char** argv, char** env) {
 
             top->eval();
 
-            if (top->in_insnInput_consume_en || top->reset) {
+            if ((top->in_insnInput_consume_en || top->reset) && in_count <= received) {
                 //std::cout << "core consumed :" << std::to_string(instructions[in_count].dii_insn) << std::endl;
                 //std::cout << "consume_en: " << (int) top->in_insnInput_consume_en << std::endl;
                 in_count++;

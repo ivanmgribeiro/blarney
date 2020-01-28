@@ -31,6 +31,8 @@ data CSRUnit =
           , mcause   :: Reg (Bit 32)
           , writeCSR :: CSRIdx -> Bit 32 -> Action ()
           , readCSR  :: CSRIdx -> WriteOnly (Bit 32) -> Action ()
+          , setHighCSR :: CSRIdx -> Bit 32 -> Action ()
+          , clearHighCSR :: CSRIdx -> Bit 32 -> Action ()
           }
 
 makeCSRUnit :: Stream (Bit 8) -> Module (Stream (Bit 8), CSRUnit)
@@ -76,10 +78,37 @@ makeCSRUnit uartIn = do
                        uartIn.consume
         ]
 
-  return (uartOut.toStream, CSRUnit { mstatus  = mstatus
-                                    , mepc     = mepc
-                                    , mtvec    = mtvec
-                                    , mcause   = mcause
-                                    , writeCSR = writeCSR
-                                    , readCSR  = readCSR
+  let setHighCSR csridx x =
+        switch csridx [
+          0x300 --> mstatus <== x .|. mstatus.val
+        , 0x305 --> mtvec   <== x .|. mtvec.val
+        , 0x341 --> mepc    <== x .|. mepc.val
+        , 0x342 --> mcause  <== x .|. mcause.val
+        , 0x800 --> display (cycleCount.val) ": 0x%08x" x
+        , 0x801 --> finish
+        , 0x803 --> enq uartOut (truncate x)
+        , 0xBC0 --> mccsr   <== truncate x .|. mccsr.val
+        ]
+
+  let clearHighCSR csridx x =
+        switch csridx [
+          0x300 --> mstatus <== x.inv .&. mstatus.val
+        , 0x305 --> mtvec   <== x.inv .&. mtvec.val
+        , 0x341 --> mepc    <== x.inv .&. mepc.val
+        , 0x342 --> mcause  <== x.inv .&. mcause.val
+        , 0x800 --> display (cycleCount.val) ": 0x%08x" x
+        , 0x801 --> finish
+        , 0x803 --> enq uartOut (truncate x)
+        , 0xBC0 --> mccsr   <== (truncate x).inv .&. mccsr.val
+        ]
+
+
+  return (uartOut.toStream, CSRUnit { mstatus      = mstatus
+                                    , mepc         = mepc
+                                    , mtvec        = mtvec
+                                    , mcause       = mcause
+                                    , writeCSR     = writeCSR
+                                    , readCSR      = readCSR
+                                    , setHighCSR   = setHighCSR
+                                    , clearHighCSR = clearHighCSR
                                     })

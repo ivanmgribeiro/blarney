@@ -299,6 +299,35 @@ csrrw s csrUnit csr = do
   readCSR csrUnit csr (s.result)
   writeCSR csrUnit csr (s.opA)
 
+csrrs :: State -> CSRUnit -> Bit 12 -> Action ()
+csrrs s csrUnit csr = do
+  readCSR csrUnit csr (s.result)
+  when (s.opAAddr .!=. 0) do
+    setHighCSR csrUnit csr (s.opA)
+
+csrrc :: State -> CSRUnit -> Bit 12 -> Action ()
+csrrc s csrUnit csr = do
+  readCSR csrUnit csr (s.result)
+  when (s.opAAddr .!=. 0) do
+    clearHighCSR csrUnit csr (s.opA)
+
+csrrwi :: State -> CSRUnit -> Bit 12 -> Bit 5 -> Action ()
+csrrwi s csrUnit csr imm = do
+  readCSR csrUnit csr (s.result)
+  writeCSR csrUnit csr (zeroExtend imm)
+
+csrrsi :: State -> CSRUnit -> Bit 12 -> Bit 5 -> Action ()
+csrrsi s csrUnit csr imm = do
+  readCSR csrUnit csr (s.result)
+  when (imm .!=. 0) do
+    setHighCSR csrUnit csr (zeroExtend imm)
+
+csrrci :: State -> CSRUnit -> Bit 12 -> Bit 5 -> Action ()
+csrrci s csrUnit csr imm = do
+  readCSR csrUnit csr (s.result)
+  when (imm .!=. 0) do
+    clearHighCSR csrUnit csr (zeroExtend imm)
+
 cGetPerms :: State -> Action ()
 cGetPerms s = do
   --display "cGetPerms"
@@ -836,6 +865,11 @@ makePebbles sim dii_in = do
         , "000000000000 <5> 000 <5> 1110011" ==> ecall s csrUnit
         , "000000000001 <5> 000 <5> 1110011" ==> ebreak s csrUnit
         , "csr<12> <5> 001 <5> 1110011" ==> csrrw s csrUnit
+        , "csr<12> <5> 010 <5> 1110011" ==> csrrs s csrUnit
+        , "csr<12> <5> 011 <5> 1110011" ==> csrrc s csrUnit
+        , "csr<12> imm<5> 101 <5> 1110011" ==> csrrwi s csrUnit
+        , "csr<12> imm<5> 110 <5> 1110011" ==> csrrsi s csrUnit
+        , "csr<12> imm<5> 111 <5> 1110011" ==> csrrci s csrUnit
         ]
 
   let cheriExecute s = (execute s) ++

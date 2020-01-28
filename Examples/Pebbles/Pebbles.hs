@@ -941,6 +941,24 @@ makePebbles sim dii_in = do
                                    })
                                    instrOutput
 
+  -- TODO see if there is a more natural place/way to do this
+  let req_old = memInput.val.old.old
+  let active_old = memInput.active.old.old
+  let rvfi_data_with_mem = (rvfi_dii_data.rvfi_data) {
+      rvfi_mem_addr  = req_old.memReqAddr
+                       .&. signExtend (active_old)
+    , rvfi_mem_rdata = memOutput.old.memRespValue
+                       .&. signExtend (active_old)
+    , rvfi_mem_wdata = req_old.memReqValue
+                       .&. signExtend (active_old)
+    , rvfi_mem_rmask = widthToBE (req_old.memReqWidth)
+                       .&. signExtend (active_old
+                                       .&. req_old.memReqWrite.inv)
+    , rvfi_mem_wmask = widthToBE (req_old.memReqWidth)
+                       .&. signExtend (active_old
+                                       .&. req_old.memReqWrite)
+    }
+
   always do
     instrInput <== InstrReq { instrReqCap = dii_instrReq.rvfi_instrReqCap }
     when (dii_instrReq.rvfi_instrConsume) do
@@ -948,6 +966,15 @@ makePebbles sim dii_in = do
       insnIn.consume
 
   return $ RVFI_DII_Out { uart_output = uartOut
-                        , rvfi_dii_data = rvfi_dii_data
+                        , rvfi_dii_data = rvfi_dii_data {
+                            rvfi_data = rvfi_data_with_mem
+                            }
                         , rvfi_dii_consume = dii_instrReq.rvfi_instrConsume
                         }
+
+widthToBE :: Bit 2 -> Bit 8
+widthToBE w =
+  if w .==. 0 then 0x1
+  else if w .==. 1 then 0x3
+  else if w .==. 2 then 0xF
+  else 0xFF

@@ -11,10 +11,10 @@ data RVFI_Data = RVFI_Data { rvfi_valid :: Bit 1
                            , rvfi_rs2_data :: Bit 32
                            , rvfi_rd_wdata :: Bit 32
                            , rvfi_mem_addr :: Bit 32
-                           , rvfi_mem_rdata :: Bit 32
-                           , rvfi_mem_wdata :: Bit 32
-                           , rvfi_mem_rmask :: Bit 4
-                           , rvfi_mem_wmask :: Bit 4
+                           , rvfi_mem_rdata :: Bit 64
+                           , rvfi_mem_wdata :: Bit 64
+                           , rvfi_mem_rmask :: Bit 8
+                           , rvfi_mem_wmask :: Bit 8
                            , rvfi_rs1_addr :: Bit 5
                            , rvfi_rs2_addr :: Bit 5
                            , rvfi_rd_addr :: Bit 5

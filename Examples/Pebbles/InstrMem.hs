@@ -95,5 +95,6 @@ cheriInstrChecks cap =
   (cap.isValidCap.inv)
   .|. (cap.isSealed)
   .|. (at @1 (cap.getPerms)).inv
+  .|. (at @2 (cap.getPerms)).inv
   .|. (cap.getAddr .<. cap.getBase)
   .|. (zeroExtend (cap.getAddr + 4) .>. cap.getTop) -- need to account for instruction size

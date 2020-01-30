@@ -743,12 +743,11 @@ cSpecialRW s csrUnit id = do
     s.resultCap <== s.ddc.val
     when (s.opAAddr .!=. 0) do
       s.ddc <== s.opACap
+  -- TODO replace this @10 with a constant somewhere
+  else if (at @10 (s.pcc.val.getPerms)).inv then
+    cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
   -- MTCC
-  else if id .==. 28 then
-    -- TODO replace 11 with a constant
-    if (at @11 (s.pcc.val.getPerms)).inv then
-      cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
-    else do
+  else if id .==. 28 then do
       s.resultCap <== s.mtcc.val
       when (s.opAAddr .!=. 0) do
         if s.opACap.isSealed then do
@@ -761,26 +760,17 @@ cSpecialRW s csrUnit id = do
           csrUnit.mtvec <== (slice @31 @2 (s.opACap.getOffset)) # 0
         -- TODO mtvec should probably be written elsewhere
   -- MTDC
-  else if id .==. 29 then
-    if (at @11 (s.pcc.val.getPerms)).inv then
-      cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
-    else do
+  else if id .==. 29 then do
       s.resultCap <== s.mtdc.val
       when (s.opAAddr .!=. 0) do
         s.mtdc <== s.opACap
   -- MSCRATCHC
-  else if id .==. 30 then
-    if (at @11 (s.pcc.val.getPerms)).inv then
-      cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
-    else do
+  else if id .==. 30 then do
       s.resultCap <== s.mscratchc.val
       when (s.opAAddr .!=. 0) do
         s.mscratchc <== s.opACap
   -- MEPCC
-  else if id .==. 31 then
-    if (at @11 (s.pcc.val.getPerms)).inv then
-      cheriTrap s csrUnit cheri_exc_accessSysRegsViolation
-    else do
+  else if id .==. 31 then do
       --display "reading mepcc returned " (s.mepcc.val)
       --display "in pcc terms: " (s.mepcc.val.getOffset)
       s.resultCap <== s.mepcc.val
@@ -793,7 +783,8 @@ cSpecialRW s csrUnit id = do
           csrUnit.mepc <== (slice @31 @1 (s.opACap.getOffset)) # 0
         else
           display "mepcc was made inexact - this shouldn't happen"
-  else
+  else do
+    display "tried to write to a SCR that doesn't exist"
     cheriTrap s csrUnit cheri_exc_setCIDViolation
   -- valid ids: 0  - pcc
   --            1  - ddc

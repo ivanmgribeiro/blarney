@@ -2,7 +2,7 @@
 module DataMem where
 
 import Blarney
-import Blarney.RAM
+import Blarney.Core.RAM
 import Blarney.Option
 
 import CHERIBlarneyWrappers

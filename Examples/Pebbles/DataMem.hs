@@ -92,7 +92,7 @@ makeDataMemCore sim memIn = do
     when (memIn.active .&. memIn.val.memReqWrite.inv) do
       --display "memory read addr: " (memIn.val.memReqAddr)
       if ((memIn.val.memReqAddr .>=. memBase)
-         .&. (memIn.val.memReqAddr .<. memBase + memSize - size)
+         .&. (memIn.val.memReqAddr .<=. memBase + memSize - size)
          .&. (isUnaligned.inv)
          .&. inv (cheriLoadChecks (memIn.val.memReqCap)
                                   (memIn.val.memReqAddr)
@@ -136,7 +136,7 @@ makeDataMemCore sim memIn = do
     -- if not, don't request anything and trigger an error
     when (memIn.active .&. memIn.val.memReqWrite) do
       if ((memIn.val.memReqAddr .>=. memBase)
-         .&. (memIn.val.memReqAddr .<. memBase + memSize - size)
+         .&. (memIn.val.memReqAddr .<=. memBase + memSize - size)
          .&. (isUnaligned.inv)
          .&. inv (cheriStoreChecks (memIn.val.memReqCap)
                                    (memIn.val.memReqAddr)

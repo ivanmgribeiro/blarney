@@ -304,8 +304,7 @@ makeCPUPipeline sim c instrResp = do
       -- Trigger stage 2, except on pipeline flush or stall
       -- pcNext.active could trigger from stage 1 if the pcc gets set, which would prevent
       -- stage 2 from going ahead even though it should
-      let go2_cond = pcNext.active.inv
-                     .&. stallWire.val.inv
+      let go2_cond =     stallWire.val.inv
                      .&. exc1_wire.val.inv
                      .&. exc1_reg.val.inv
                      .&. jump_wire.val.inv
@@ -401,8 +400,7 @@ makeCPUPipeline sim c instrResp = do
 
       -- Trigger stage 3, except on pipeline flush
       when (go2.val) do
-        go3 <== pcNext.active.inv
-                .&. exc2_wire.val.inv
+        go3 <==     exc2_wire.val.inv
                 .&. exc2_reg.val.inv
                 .&. jump_wire.val.inv
       exc3_reg <== exc2_wire.val .|. exc2_reg.val
@@ -473,6 +471,7 @@ makeCPUPipeline sim c instrResp = do
         matchDefault (instr3.val) (execRules c state) (do exc3_wire <== 1
                                                           pcNext <== mtcc.val
                                                           mepcc <== pcc3.val
+                                                          jump_wire <== 1
                                                           --display "unknown instruction"
                                                       )
         --match (instr3.val) (execRules c state)
@@ -483,7 +482,7 @@ makeCPUPipeline sim c instrResp = do
       pcc4 <== pcc3.val
 
       when (go3.val) do
-        go4 <== pcNext.active.inv
+        go4 <== exc4_wire.val.inv
                 .&. exc3_wire.val.inv
                 .&. exc3_reg.val.inv
 
@@ -496,7 +495,10 @@ makeCPUPipeline sim c instrResp = do
           rvfi_valid = rvfi3.val.rvfi_valid .&. exc4_wire.val.inv,
           rvfi_rs1_data = regA.val.getAddr,
           rvfi_rs2_data = regB.val.getAddr,
-          rvfi_pc_wdata = if (pcNext.active) then pcNext.val.getOffset else rvfi3.val.rvfi_pc_wdata
+          rvfi_pc_wdata = if exc3_wire.val .|. jump_wire.val then
+                            pcNext.val.getOffset
+                          else
+                            rvfi3.val.rvfi_pc_wdata
       }
 
 
@@ -514,7 +516,9 @@ makeCPUPipeline sim c instrResp = do
             , opAAddr   = (c.srcA) (instr4.val)
             , opBAddr   = (c.srcB) (instr4.val)
             --, pc     = ReadWrite (error "cant read pc in post-execute") (pcNext <==)
-            , pc     = ReadWrite (pcc4.val.getOffset) (\x -> pcNext <== lower ((pcc4.val.setOffset) x))
+            , pc     = ReadWrite (pcc4.val.getOffset) (\x -> do
+                                                         pcNext <== lower ((pcc4.val.setOffset) x)
+                                                         jump_wire <== 1)
             , resultCap = WriteOnly $ \x ->
                             when (dst c (instr4.val) .!=. 0) do
                               postResultWire <== x
@@ -569,7 +573,10 @@ makeCPUPipeline sim c instrResp = do
                                 }
 
       -- Writeback
-      when ((finalResultWire.active) .&. exc4_wire.val.inv .&. (delay 0 (exc4_wire.val.inv))) do
+      when ((finalResultWire.active)
+            .&. exc4_wire.val.inv
+            .&. exc4_reg.val.inv
+            .&. (delay 0 (exc4_wire.val.inv))) do
         store regFileA rd (finalResultWire.val)
         store regFileB rd (finalResultWire.val)
         --display "instruction " (instr4.val) " wrote 0x" (finalResultWire.val) " to x" rd
@@ -601,7 +608,7 @@ makeCPUPipeline sim c instrResp = do
   return (RVFI_DII_Data { rvfi_data = rvfifinal.val
                         , flush = exc3_wire.val .|. jump_wire.val
                         , flush4 = exc4_wire.val
-                        , go4 = go4.val
+                        , go4 = rvfi4.val.rvfi_valid
                         }
          ,RVFI_DII_InstrReq { rvfi_instrReqCap = pcc1.val
                             , rvfi_instrConsume = consume.val

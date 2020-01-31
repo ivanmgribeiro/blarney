@@ -128,6 +128,16 @@ bgeu s imm = do
   when (s.opA .>=. s.opB) do
     s.pc <== s.pc.val + signExtend (imm # (0 :: Bit 1))
 
+jumpWrap :: State -> CSRUnit -> (State -> Bit m -> Action ()) -> Bit m -> Action ()
+jumpWrap s csrUnit jumpInstr = do
+  let sModded = (s) {
+    pc = ReadWrite (s.pc.val) (\x -> do
+                                 let postOffset = (s.pcc.val.setOffset) x
+                                 if at @93 postOffset then
+                                   s.pc <== x
+                                 else cheriTrap s csrUnit cheri_exc_representabilityViolation)
+  }
+  jumpInstr sModded
 
 --------------------------------------------
 -- TODO
@@ -675,9 +685,12 @@ cJALR s csrUnit = do
   else if zeroExtend (s.opACap.getAddr + 4) .>. s.opACap.getTop then
     cheriTrap s csrUnit cheri_exc_lengthViolation
   else do
-    s.resultCap <== lower ((s.pcc.val.setOffset) (s.pc.val + 4))
-    -- TODO representability checks
-    s.pcc <== lower ((s.opACap.setOffset) (slice @31 @1 (s.opACap.getOffset) # 0))
+    let res = (s.pcc.val.setOffset) (s.pcc.val.getOffset + 4)
+    if (at @93 res).inv then
+      cheriTrap s csrUnit cheri_exc_representabilityViolation
+    else do
+      s.resultCap <== lower res
+      s.pcc <== lower ((s.opACap.setOffset) (slice @31 @1 (s.opACap.getOffset) # 0))
 
 -- TODO check that target address is aligned properly
 -- (can't have 2-byte aligned instructions)
@@ -708,9 +721,12 @@ cCall s csrUnit = do
   else if zeroExtend (newPC + 4) .>. s.opACap.getTop then
     cheriTrap s csrUnit cheri_exc_lengthViolation
   else do
-    s.resultCap <== (s.opBCap.setType) (-1)
-    s.pcc <== (s.opACap.setType) (-1)
-
+    let res = (((s.opACap.setType) (-1)).setOffset) ((slice @31 @1 (s.opACap.getOffset)) # 0)
+    if (at @93 res).inv then
+      cheriTrap s csrUnit cheri_exc_representabilityViolation
+    else do
+      s.resultCap <== (s.opBCap.setType) (-1)
+      s.pcc <== lower res
 
 cTestSubset :: State -> Action ()
 cTestSubset s = do
@@ -842,14 +858,14 @@ makePebbles sim dii_in = do
         , "0100000 <5> <5> 000 <5> 0110011" ==> sub s
         , "0000000 imm[4:0] <5> 001 <5> 0 reg<1> 10011" ==> left s
         , "0 arith<1> 00000 imm[4:0] <5> 101 <5> 0 reg<1> 10011" ==> right s
-        , "imm[19] imm[9:0] imm[10] imm[18:11] <5> 1101111" ==> jal s
-        , "imm[11:0] <5> 000 <5> 1100111" ==> jalr s
-        , "imm[11] imm[9:4] <5> <5> 000 imm[3:0] imm[10] 1100011" ==> beq s
-        , "imm[11] imm[9:4] <5> <5> 001 imm[3:0] imm[10] 1100011" ==> bne s
-        , "imm[11] imm[9:4] <5> <5> 100 imm[3:0] imm[10] 1100011" ==> blt s
-        , "imm[11] imm[9:4] <5> <5> 110 imm[3:0] imm[10] 1100011" ==> bltu s
-        , "imm[11] imm[9:4] <5> <5> 101 imm[3:0] imm[10] 1100011" ==> bge s
-        , "imm[11] imm[9:4] <5> <5> 111 imm[3:0] imm[10] 1100011" ==> bgeu s
+        , "imm[19] imm[9:0] imm[10] imm[18:11] <5> 1101111" ==> jumpWrap s csrUnit jal
+        , "imm[11:0] <5> 000 <5> 1100111" ==> jumpWrap s csrUnit jalr
+        , "imm[11] imm[9:4] <5> <5> 000 imm[3:0] imm[10] 1100011" ==> jumpWrap s csrUnit beq
+        , "imm[11] imm[9:4] <5> <5> 001 imm[3:0] imm[10] 1100011" ==> jumpWrap s csrUnit bne
+        , "imm[11] imm[9:4] <5> <5> 100 imm[3:0] imm[10] 1100011" ==> jumpWrap s csrUnit blt
+        , "imm[11] imm[9:4] <5> <5> 110 imm[3:0] imm[10] 1100011" ==> jumpWrap s csrUnit bltu
+        , "imm[11] imm[9:4] <5> <5> 101 imm[3:0] imm[10] 1100011" ==> jumpWrap s csrUnit bge
+        , "imm[11] imm[9:4] <5> <5> 111 imm[3:0] imm[10] 1100011" ==> jumpWrap s csrUnit bgeu
         , "imm[11:0] <5> <1> w<2> <5> 0000011" ==> memRead_1 s memInput csrUnit
         , "imm[11:5] <5> <5> 0 w<2> imm[4:0] 0100011" ==> memWrite_1 s memInput csrUnit
         , "fm[3:0] pred[3:0] succ[3:0] <5> 000 <5> 0001111" ==> fence s

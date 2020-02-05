@@ -224,6 +224,7 @@ makeCPUPipeline sim c instrResp = do
                   .&. (stallWire.val.inv)
                   .&. (exc3_wire.val.inv)
                   .&. (exc4_wire.val.inv)
+                  .&. (jump_wire.val.inv)
                   .&. (pcNext.active.inv .|. instrResp.instrRespErr))
 
       --when (consume.val) do

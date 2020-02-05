@@ -47,11 +47,12 @@ lui s imm = s.result <== signExtend (imm # (0 :: Bit 12))
 auipc :: State -> Bit 20 -> Action ()
 auipc s imm =
   if s.pcc.val.getFlags then do
-    let res = (s.pcc.val.setOffset) (s.pcc.val.getOffset + imm # (0 :: Bit 12))
+    let target = s.pcc.val.getOffset + (imm # (0 :: Bit 12))
+    let res = (s.pcc.val.setOffset) target
     if at @93 res then
       s.resultCap <== lower res
     else
-      display "pcc has been made unrepresentable - this should never happen"
+      s.resultCap <== nullWithAddr target
   else
     s.result <== s.pc.val + (imm # (0 :: Bit 12))
 
@@ -407,7 +408,7 @@ cSeal s csrUnit = do
   else if zeroExtend (s.opBCap.getAddr) .>=. s.opBCap.getTop then
     cheriTrap s csrUnit cheri_exc_lengthViolation
   -- TODO this might be the wrong max OTYPE
-  else if s.opBCap.getAddr .>. 0xc then
+  else if s.opBCap.getAddr .>=. 0xc then
     cheriTrap s csrUnit cheri_exc_lengthViolation
   -- TODO RVBS and the sail definitions have a representability check here
   -- does this need it as well? the wrapper only has 93 bits
@@ -793,12 +794,16 @@ cSpecialRW s csrUnit id = do
       when (s.opAAddr .!=. 0) do
         --display "setting mepcc to " (s.opACap)
         --display "in pcc terms " (s.opACap.getOffset)
-        let res = (s.opACap.setOffset) ((slice @31 @1 (s.opACap.getOffset)) # 0)
-        if at @93 res then do
-          s.mepcc <== lower res
-          csrUnit.mepc <== (slice @31 @1 (s.opACap.getOffset)) # 0
-        else
-          display "mepcc was made inexact - this shouldn't happen"
+        if s.opACap.isSealed then do
+          s.mepcc <== nullWithAddr ((slice @31 @2 (s.opACap.getAddr)) # 0)
+          csrUnit.mepc <== (slice @31 @2 (s.opACap.getOffset)) # 0
+        else do
+          let res = (s.opACap.setOffset) ((slice @31 @1 (s.opACap.getOffset)) # 0)
+          if at @93 res then do
+            s.mepcc <== lower res
+            csrUnit.mepc <== (slice @31 @1 (s.opACap.getOffset)) # 0
+          else
+            display "mepcc was made inexact - this shouldn't happen"
   else do
     display "tried to write to a SCR that doesn't exist"
     cheriTrap s csrUnit cheri_exc_setCIDViolation

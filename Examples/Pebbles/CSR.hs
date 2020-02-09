@@ -50,7 +50,7 @@ makeCSRUnit uartIn = do
   mtvec   :: Reg (Bit 32) <- makeReg 0
   mepc    :: Reg (Bit 32) <- makeReg 0
   mcause  :: Reg (Bit 32) <- makeReg 0
-  mccsr   :: Reg (Bit 16) <- makeReg 0
+  --mccsr   :: Reg (Bit 16) <- makeReg 0
 
   -- Handle CSR writes
   let writeCSR csridx x =
@@ -62,7 +62,8 @@ makeCSRUnit uartIn = do
         , 0x800 --> display (cycleCount.val) ": 0x%08x" x
         , 0x801 --> finish
         , 0x803 --> enq uartOut (truncate x)
-        , 0xBC0 --> mccsr   <== truncate x
+        , 0xB00 --> cycleCount <== x
+        --, 0xBC0 --> mccsr   <== truncate x
         ]
 
   -- Handle CSR writes
@@ -76,6 +77,8 @@ makeCSRUnit uartIn = do
         , 0x804 --> result <== zeroExtend (uartIn.canPeek)
         , 0x805 --> do result <== zeroExtend (uartIn.peek)
                        uartIn.consume
+        , 0xB00 --> result <== cycleCount.val
+        --, 0xBC0 --> result <== zeroExtend (mccsr.val)
         ]
 
   let setHighCSR csridx x =
@@ -87,7 +90,8 @@ makeCSRUnit uartIn = do
         , 0x800 --> display (cycleCount.val) ": 0x%08x" x
         , 0x801 --> finish
         , 0x803 --> enq uartOut (truncate x)
-        , 0xBC0 --> mccsr   <== truncate x .|. mccsr.val
+        , 0xB00 --> cycleCount <== x .|. cycleCount.val
+        --, 0xBC0 --> mccsr   <== truncate x .|. zeroExtend (mccsr.val)
         ]
 
   let clearHighCSR csridx x =
@@ -99,7 +103,8 @@ makeCSRUnit uartIn = do
         , 0x800 --> display (cycleCount.val) ": 0x%08x" x
         , 0x801 --> finish
         , 0x803 --> enq uartOut (truncate x)
-        , 0xBC0 --> mccsr   <== (truncate x).inv .&. mccsr.val
+        , 0xB00 --> cycleCount <== x.inv .&. cycleCount.val
+        --, 0xBC0 --> mccsr   <== (truncate x).inv .&. zeroExtend (mccsr.val)
         ]
 
 

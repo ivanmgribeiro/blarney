@@ -8,12 +8,12 @@ import Blarney.Option
 import CHERIBlarneyWrappers
 
 -- Data memory size in bytes
-type LogDataMemSize = 16
+type LogDataMemSize = 23
 
 -- memory base & size constants
 -- TODO make LogDataMemSize depend on these
-memBase = 0x80000000
-memSize = 0x10000
+memBase = 0xC0000000
+memSize = 0x18BCB0
 
 -- Implement data memory as eight block RAMs
 -- (one for each byte of double word)
@@ -33,7 +33,7 @@ data MemReq = MemReq {
   memReqWidth :: AccessWidth,
   memReqValue :: Bit 64,
   memReqTag :: Bit 1
-} deriving (Generic, Bits)
+} deriving (Generic, Bits, FShow)
 
 data MemResp = MemResp {
   memRespValue :: Bit 64,
@@ -45,15 +45,16 @@ data MemResp = MemResp {
 type MemIn = Wire MemReq
 
 -- TODO extend this to take in the memory base & size
-makeDataMemCore :: Bool -> MemIn -> Module MemResp
-makeDataMemCore sim memIn = do
-  dataMem :: DataMem <- makeDataMem sim
+makeDataMemCore :: Bool -> Bool -> MemIn -> Module MemResp
+makeDataMemCore sim printStuff memIn = do
+  dataMem :: DataMem <- makeDataMemInit sim
   tagMem :: TagMem <- makeRAM
 
   -- information about the pending request
   -- TODO might make more sense to just make a Reg (MemReq) to hold this,
   -- or to use old
   readPending :: Reg (Bit 1) <- makeReg 0
+  readPendingAddr :: Reg (Bit 32) <- makeReg 0
   readPendingWidth :: Reg (AccessWidth) <- makeReg dontCare
   readPendingAlignment :: Reg (Bit 3) <- makeReg dontCare
   errPending :: Reg (Bit 1) <- makeDReg 0
@@ -75,6 +76,21 @@ makeDataMemCore sim memIn = do
                         0
     let size = zeroExtend (accessWidthToSize (memIn.val.memReqWidth))
 
+    when (memIn.active) do
+      --when ((memIn.val.memReqAddr .>=. memBase + memSize)
+      --      .|. (memIn.val.memReqAddr .<=. memBase)) do
+      --  when (memIn.val.memReqWrite) do
+      --    display "wrote special addr 0x" (memIn.val.memReqAddr)
+      --    display (lower (memIn.val.memReqValue) :: Bit 8)
+      --  when (memIn.val.memReqWrite.inv) do
+      --    display "read special addr 0x" (memIn.val.memReqAddr)
+      if printStuff then do
+        when (memIn.val.memReqAddr .==. 0xC01DF00D) do
+          when (memIn.val.memReqWrite) do
+            display_ "%c" (lower (memIn.val.memReqValue) :: Bit 8)
+      else noAction
+
+
     ------------------------------
 
     ----      READ LOGIC      ----
@@ -86,6 +102,7 @@ makeDataMemCore sim memIn = do
     -- inputs to load the data
     -- if not, don't request anything and (memIn.val.memReqAddr)trigger an error
     readPending <== memIn.active .&. memIn.val.memReqWrite.inv
+    readPendingAddr <== memIn.val.memReqAddr
     readPendingWidth <== memIn.val.memReqWidth
     readPendingAlignment <== addrBottom
 
@@ -94,9 +111,9 @@ makeDataMemCore sim memIn = do
       if ((memIn.val.memReqAddr .>=. memBase)
          .&. (memIn.val.memReqAddr .<=. memBase + memSize - size)
          .&. (isUnaligned.inv)
-         .&. inv (cheriLoadChecks (memIn.val.memReqCap)
+         .&. (cheriLoadChecks (memIn.val.memReqCap)
                                   (memIn.val.memReqAddr)
-                                  (memIn.val.memReqWidth))) then do
+                                  (memIn.val.memReqWidth) .==. 0)) then do
         dataMemRead dataMem (memIn.val.memReqAddr)
         when (isDoubleAccess (memIn.val.memReqWidth)) do
           let tagMemAddr = lower (upper (memIn.val.memReqAddr) :: Bit 29)
@@ -113,16 +130,29 @@ makeDataMemCore sim memIn = do
         --display "cap valid: " (memIn.val.memReqCap.isValidCap)
         --display "cap isSealed: " (memIn.val.memReqCap.isSealed)
         --display "cap getPerms: " (memIn.val.memReqCap.getPerms)
-        errPending <== 1
+        when ((memIn.val.memReqAddr .!=. 0xC01DF00D)
+              .&. (memIn.val.memReqAddr .!=. 0xC01DF01D)
+              .&. (memIn.val.memReqAddr .!=. 0xC01DF02D)) do
+          --display "read failed addr " (memIn.val.memReqAddr)
+          --display "cheri checks: "(cheriLoadChecks (memIn.val.memReqCap)
+          --                                         (memIn.val.memReqAddr)
+          --                                         (memIn.val.memReqWidth))
+          errPending <== 1
 
     -- read logic part 2
     -- get the memory values that were read and set the response signals
     when (readPending.val) do
-      responseData <== readMux dataMem
-                               (0 # readPendingAlignment.val)
-                               (readPendingWidth.val)
-                               1
-      responseTag <== out tagMem
+      if (readPendingAddr.val .==. 0xC01DF01D) then do
+        --display "reading c01df01d"
+        responseData <== 0x0
+        responseTag <== 0
+      else do
+        responseData <== readMux dataMem
+                                 (0 # readPendingAlignment.val)
+                                 (readPendingWidth.val)
+                                 1
+        responseTag <== out tagMem
+        --display "read succeeded at " (readPendingAddr.val) ", data: " (responseData.val)
 
     -------------------------------
 
@@ -138,9 +168,9 @@ makeDataMemCore sim memIn = do
       if ((memIn.val.memReqAddr .>=. memBase)
          .&. (memIn.val.memReqAddr .<=. memBase + memSize - size)
          .&. (isUnaligned.inv)
-         .&. inv (cheriStoreChecks (memIn.val.memReqCap)
+         .&. (cheriStoreChecks (memIn.val.memReqCap)
                                    (memIn.val.memReqAddr)
-                                   (memIn.val.memReqWidth))) then do
+                                   (memIn.val.memReqWidth) .==. 0)) then do
         dataMemWrite dataMem
                      (memIn.val.memReqWidth)
                      (memIn.val.memReqAddr)
@@ -148,6 +178,7 @@ makeDataMemCore sim memIn = do
         when (isDoubleAccess (memIn.val.memReqWidth)) do
           let tagMemAddr = lower (upper (memIn.val.memReqAddr) :: Bit 29)
           store tagMem tagMemAddr (memIn.val.memReqTag)
+        --display "write succeeded " (memIn.val)
       else do
         --display "errored write, memchecks: " (cheriStoreChecks (memIn.val.memReqCap)
         --                                                       (memIn.val.memReqAddr)
@@ -160,7 +191,14 @@ makeDataMemCore sim memIn = do
         --display "cap valid: " (memIn.val.memReqCap.isValidCap)
         --display "cap isSealed: " (memIn.val.memReqCap.isSealed)
         --display "cap getPerms: " (memIn.val.memReqCap.getPerms)
-        errPending <== 1
+        when ((memIn.val.memReqAddr .!=. 0xC01DF00D)
+              .&. (memIn.val.memReqAddr .!=. 0xC01DF01D)
+              .&. (memIn.val.memReqAddr .!=. 0xC01DF02D)) do
+          --display "write failed at addr" (memIn.val.memReqAddr)
+          --display "cheri checks: "(cheriStoreChecks (memIn.val.memReqCap)
+          --                                         (memIn.val.memReqAddr)
+          --                                         (memIn.val.memReqWidth))
+          errPending <== 1
 
 
   return MemResp {
@@ -241,6 +279,7 @@ dataMemWrite dataMem w addr d =
     [ when byteEn do
         let writeAddr = lower (upper addr :: Bit 29)
         store mem writeAddr byte
+        --display "stored " byte " at " addr
     | (mem, byte, byteEn) <- zip3 dataMem bytes byteEns
     ]
   where
@@ -295,19 +334,37 @@ dataMemRead dataMem addr =
 -- value that causes the address to become inexact (is this a thing that can even
 -- happen? what about if it's ddc-relative where you add on the rs1 to the address
 -- of ddc? can this make it inexact?)
-cheriLoadChecks :: Bit 93 -> Bit 32 -> AccessWidth -> Bit 1
+cheriLoadChecks :: Bit 93 -> Bit 32 -> AccessWidth -> Bit 5
 cheriLoadChecks cap addr width =
-  (cap.isValidCap.inv)
-  .|. (cap.isSealed)
-  .|. (isDoubleAccess width .&. inv (at @4 (cap.getPerms)))
-  .|. ((at @2 (cap.getPerms)).inv)
-  .|. (addr .<. cap.getBase)
-  .|. (zeroExtend (addr + zeroExtend (accessWidthToSize width)) .>. cap.getTop)
 
-cheriStoreChecks :: Bit 93 -> Bit 32 -> AccessWidth -> Bit 1
+  if (cap.isValidCap.inv) then
+    0x02
+  else if (cap.isSealed) then
+    0x03
+  else if (isDoubleAccess width .&. inv (at @4 (cap.getPerms))) then
+    0x14
+  else if ((at @2 (cap.getPerms)).inv) then
+    0x12
+  else if (addr .<. cap.getBase) then
+    0x01
+  else if (zeroExtend (addr + zeroExtend (accessWidthToSize width)) .>. cap.getTop) then
+    0x01
+  else
+    0
+
+cheriStoreChecks :: Bit 93 -> Bit 32 -> AccessWidth -> Bit 5
 cheriStoreChecks cap addr width =
-  (cap.isValidCap.inv)
-  .|. (cap.isSealed)
-  .|. ((at @3 (cap.getPerms)).inv)
-  .|. (addr .<. cap.getBase)
-  .|. (zeroExtend (addr + zeroExtend (accessWidthToSize width)) .>. cap.getTop)
+  if (cap.isValidCap.inv) then
+    0x02
+  else if (cap.isSealed) then
+    0x03
+  else if (isDoubleAccess width .&. inv (at @5 (cap.getPerms))) then
+    0x15
+  else if ((at @3 (cap.getPerms)).inv) then
+    0x13
+  else if (addr .<. cap.getBase) then
+    0x01
+  else if (zeroExtend (addr + zeroExtend (accessWidthToSize width)) .>. cap.getTop) then
+    0x01
+  else
+    0

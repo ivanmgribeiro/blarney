@@ -17,4 +17,4 @@ main :: IO ()
 main = do
   --writeVerilogTop simPebbles "SimPebbles" "Pebbles-Verilog/"
   --makePebbles True
-  writeVerilogModule (makePebbles True) "Pebbles" "Pebbles-Verilog/"
+  writeVerilogModule (makePebbles True False) "SimPebbles" "Pebbles-Verilog/"

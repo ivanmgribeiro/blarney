@@ -11,14 +11,20 @@ import DataMem
 import RVFI_DII
 
 -- Instruction memory size
-type InstrAddr = Bit 14
+type InstrAddr = Bit 23
 
 -- Instructions
 type Instr = Bit 32
 
 -- instruction memory request type
 data InstrReq = InstrReq {
-  instrReqCap :: Bit 93
+  instrReqCap :: Bit 93,
+  instrWrite :: Bit 1,
+  instrWriteCap :: Bit 93,
+  instrWriteAddr :: Bit 32,
+  instrWriteData :: Bit 64,
+  instrWriteWidth :: AccessWidth,
+  instrWriteTag :: Bit 1
 } deriving (Generic, Bits)
 
 type InstrIn = Wire InstrReq
@@ -57,26 +63,67 @@ makeInstrMem sim dii instrIn rvfi_dii_in = do
                                       , memReqValue = 0
                                       , memReqTag = 0
                                       }
-    memResp <- makeDataMemCore sim memIn
+    memResp <- makeDataMemCore sim False memIn
+
+    valid :: Reg (Bit 1) <- makeReg 0
+    writePending :: Reg (Bit 1) <- makeReg 0
 
     always do
-      let memReq = MemReq {
-        memReqCap = instrIn.val.instrReqCap,
-        memReqAddr = instrIn.val.instrReqCap.getAddr,
-        memReqWrite = 0,
-        memReqWidth = 2,
-        memReqValue = 0,
-        memReqTag = 0
-      }
-
-      when (instrIn.active) do
+      if (instrIn.val.instrWrite) then do
+        --display "there shouldn't be an instruction next cycle"
+        writePending <== 1
+        valid <== 0
+        --display "writing to instr mem " (instrIn.val.old.instrWriteAddr)
+        let memReq = MemReq {
+          memReqCap = instrIn.val.instrWriteCap,
+          memReqAddr = instrIn.val.instrWriteAddr,
+          memReqWrite = 1,
+          memReqWidth = instrIn.val.instrWriteWidth,
+          memReqValue = instrIn.val.instrWriteData,
+          memReqTag = instrIn.val.instrWriteTag
+        }
         memIn <== memReq
+      else do
+        let memReq = MemReq {
+          memReqCap = instrIn.val.instrReqCap,
+          memReqAddr = instrIn.val.instrReqCap.getAddr,
+          memReqWrite = 0,
+          memReqWidth = 2,
+          memReqValue = 0,
+          memReqTag = 0
+        }
+
+        --when (instrIn.active) do
+        --display "received request"
+        --display "request address: " (instrIn.val.instrReqCap.getAddr)
+        memIn <== memReq
+        valid <== 1
+        writePending <== 0
+
+          
+          --display "inst reply: " (memResp.memRespValue)
+          --display "\n"
+
+      --when (memResp.memRespErr) do
+      --    display "instr mem err"
+      --    display "on addr " (memIn.val.old.memReqAddr)
+
+      --when (writePending.val .&. memResp.memRespErr.inv) do
+      --  display "instr mem write returned"
+      --display "wrote data to instr mem: "
+      --display "addr: " (memIn.val.old.memReqAddr)
+      --display "write: " (memIn.val.old.memReqWrite)
+      --display "data: " (memIn.val.old.memReqValue)
+      --display "width: " (memIn.val.old.memReqWidth)
+      --display "tag: " (memIn.val.old.memReqTag)
+      --display "and got response: " (memResp.memRespErr)
+
 
     -- TODO this is untested
     let instrResp = InstrResp {
       instrRespValue = lower (memResp.memRespValue),
-      instrRespValid = 1,
-      instrRespErr   = memResp.memRespErr .|. cheriInstrChecks (instrIn.val.instrReqCap)
+      instrRespValid = valid.val,
+      instrRespErr   = 0--memResp.memRespErr .|. cheriInstrChecks (instrIn.val.instrReqCap)
     }
 
     return instrResp

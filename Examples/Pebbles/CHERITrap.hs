@@ -3,6 +3,7 @@ module CHERITrap where
 import Blarney
 
 import CSR
+import Trap
 import Pipeline
 import CHERIBlarneyWrappers
 
@@ -86,16 +87,18 @@ cheri_exc_setCIDViolation               :: CHERIExceptionCode = 0x1c
 --  else
 --    "unknown cheri exception code"
 
-cheriTrap :: State -> CSRUnit -> CHERIExceptionCode -> Action ()
-cheriTrap s csrUnit c = do
+cheriTrap :: State -> CSRUnit -> CHERIExceptionCode -> Bit 6 -> Action ()
+cheriTrap s csrUnit c reg = do
   -- TODO write register number as well
   display "CHERI TRAP CALLED @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
   display "exception code: " c
-  (csrUnit.writeCSR) 0xBC0 (zeroExtend c)
+  --(csrUnit.writeCSR) 0xBC0 (zeroExtend c)
+  s.mccsr <== (zeroExtend (reg # c # (0 :: Bit 5)))
   s.mepcc <== s.pcc.val
   csrUnit.mepc <== s.pc.val
+  csrUnit.mcause <== toCause (Exception exc_CHERIException)
   --s.pc  <== csrUnit.mtvec.val
   s.pcc <== lower ((s.mtcc.val.setOffset) (s.mtcc.val.getOffset .&. 0xfffffffc))
-  display "setting mepc to value " (s.pc.val)
-  display "setting mepcc to value " (s.pcc.val)
+  --display "setting mepc to value " (s.pc.val)
+  --display "setting mepcc to value " (s.pcc.val)
   s.exc <== 1

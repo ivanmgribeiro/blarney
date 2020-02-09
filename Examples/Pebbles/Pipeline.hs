@@ -60,6 +60,10 @@ data State =
     -- Keep track of whether we've encountered an exception
     -- TODO rename to trap in order to align with RVFI naming?
   , exc :: WriteOnly (Bit 1)
+    -- Stall wire
+    -- for now, this just stalls the entire pipeline (ie everything stops)
+    -- TODO implement this in a tidier way
+  , stall :: WriteOnly (Bit 1)
     -- special-cased SCRs
     -- TODO look into moving these into their own RAM (or adding to CSR RAM?)
   , pcc :: ReadWrite (Bit 93)
@@ -68,6 +72,7 @@ data State =
   , mtdc :: ReadWrite (Bit 93)
   , mscratchc :: ReadWrite (Bit 93)
   , mepcc :: ReadWrite (Bit 93)
+  , mccsr :: ReadWrite (Bit 16)
   }
 
 rvfi_base :: RVFI_Data = RVFI_Data {
@@ -136,6 +141,7 @@ makeCPUPipeline sim c instrResp = do
   -- Capability program counters for each pipeline stage
   -- TODO optimise by removing unnecessary ones (if pcc permissions/offset/base etc don't
   -- change why store multiple?)
+  pcFetchWire :: Wire (Bit 93) <- makeWire 0
   pcc1 :: Reg (Bit 93) <- makeReg dontCare
   pcc2 :: Reg (Bit 93) <- makeReg dontCare
   pcc3 :: Reg (Bit 93) <- makeReg dontCare
@@ -147,6 +153,7 @@ makeCPUPipeline sim c instrResp = do
   mtdc :: Reg (Bit 93) <- makeReg 0
   mscratchc :: Reg (Bit 93) <- makeReg 0
   mepcc :: Reg (Bit 93) <- makeReg 0
+  mccsr :: Reg (Bit 16) <- makeReg 0
 
   -- signals whether stage 3 has jumped
   jump_wire :: Wire (Bit 1) <- makeWire 0
@@ -184,12 +191,13 @@ makeCPUPipeline sim c instrResp = do
 
   regCounter :: Reg (Bit 5) <- makeReg 0
   started :: Reg (Bit 1) <- makeReg 0
+  goreg :: Reg (Bit 1) <- makeReg 1
 
   always do
     -- startup sequence
     -- TODO clean this up by using go's properly
     -- (see https://github.com/mn416/blarney/pull/23)
-    when (started.val.inv) do
+    when (started.val.inv .&. goreg.val) do
       store regFileA (regCounter.val) if regCounter.val .==. 0
                                       then nullCap
                                       else almightyCap
@@ -201,7 +209,7 @@ makeCPUPipeline sim c instrResp = do
     
     when (regCounter.val .==. 31) do
       started <== 1
-      pcc1 <== lower ((almightyCap.setAddr) (0x80000000))
+      pcc1 <== lower ((almightyCap.setAddr) (0xBFFFFFFC))
       ddc <== almightyCap
       mepcc <== lower ((almightyCap.setAddr) (0x00000000))
       mtcc <== almightyCap
@@ -209,7 +217,7 @@ makeCPUPipeline sim c instrResp = do
       mscratchc <== nullCap
       --display "finished starting up"
 
-    when (started.val) do
+    when (started.val .&. goreg.val) do
       --display "clocking core"
 
 
@@ -258,6 +266,8 @@ makeCPUPipeline sim c instrResp = do
       --display "pcNext.active " (pcNext.active)
       --display "pcNext.val " (pcNext.val)
       --display "wrote 0x" (pcFetch) " to pcc1"
+      -- TODO this needs to replace the let pcFetch above
+      pcFetchWire <== pcFetch
       pcc1 <== pcFetch
 
       -- trigger stage 1 when instruction fetch has returned
@@ -269,9 +279,10 @@ makeCPUPipeline sim c instrResp = do
       --display "pc used for fetch: " (pcFetch.getOffset)
 
       when (instrResp.instrRespValid .&. instrResp.instrRespErr) do
-        --display "instruction check fail"
+        display "instruction check fail"
         pcNext <== mtcc.val
         mepcc <== pcc1.val
+        mccsr <== 0x11
         --display "setting mepcc to " (pcc1.val)
         --display "in pc terms " (pcc1.val.getOffset)
         exc1_wire <== 1
@@ -363,6 +374,7 @@ makeCPUPipeline sim c instrResp = do
             , resultCap = error "Can't write resultCap in pre-execute"
             , late      = WriteOnly (lateWire <==)
             , exc       = WriteOnly (exc2_wire <==)
+            , stall     = error "no stalling available in stage 2"
             -- TODO what happens if i set the pcc to something that is unrepresentable
             , pcc       = ReadWrite (pcc2.val) (error "cant write pcc")
             , ddc       = ReadWrite (ddc.val) (error "cant write ddc")
@@ -370,6 +382,7 @@ makeCPUPipeline sim c instrResp = do
             , mtdc      = ReadWrite (mtdc.val) (mtdc <==)
             , mscratchc = ReadWrite (mscratchc.val) (mscratchc <==)
             , mepcc     = ReadWrite (mepcc.val) (mepcc <==)
+            , mccsr     = ReadWrite (mccsr.val) (mccsr <==)
             }
 
       -- Pre-execute rules
@@ -454,6 +467,7 @@ makeCPUPipeline sim c instrResp = do
                               --        " length: " (x.getLength)
             , late   = error "Cant write late signal in execute"
             , exc    = WriteOnly (exc3_wire <==)
+            , stall  = WriteOnly (\x -> (goreg <== x.inv))
             , pcc       = ReadWrite (pcc3.val)
                                     (\x -> do
                                        pcNext <== x
@@ -463,18 +477,20 @@ makeCPUPipeline sim c instrResp = do
             , mtdc      = ReadWrite (mtdc.val) (mtdc <==)
             , mscratchc = ReadWrite (mscratchc.val) (mscratchc <==)
             , mepcc     = ReadWrite (mepcc.val) (mepcc <==)
+            , mccsr     = ReadWrite (mccsr.val) (mccsr <==)
             }
 
       -- Execute rules
       -- TODO might not have to check exc3_reg (since it would be taken into account
       -- the previous cycle when setting go3)
       when (go3.val .&. exc4_wire.val.inv .&. exc3_reg.val.inv) do
-        matchDefault (instr3.val) (execRules c state) (do exc3_wire <== 1
-                                                          pcNext <== mtcc.val
-                                                          mepcc <== pcc3.val
-                                                          jump_wire <== 1
-                                                          --display "unknown instruction"
-                                                      )
+        --display "stage 3 executing"
+        matchDefault (instr3.val) (execRules c state) (noAction) --(do exc3_wire <== 1
+                                                      --    pcNext <== mtcc.val
+                                                      --    mepcc <== pcc3.val
+                                                      --    jump_wire <== 1
+                                                      --    --display "unknown instruction"
+                                                      --)
         --match (instr3.val) (execRules c state)
         -- set RVFI mem info here or in the instruction definitions?
 
@@ -531,6 +547,7 @@ makeCPUPipeline sim c instrResp = do
                            --display "in stage 4"
             , late   = error "Can't write late signal in post-execute"
             , exc    = WriteOnly (exc4_wire <==)
+            , stall  = error "can't stall in writeback stage"
             , pcc       = ReadWrite (pcc4.val)
                                     (\x -> do
                                        pcNext <== x
@@ -540,6 +557,7 @@ makeCPUPipeline sim c instrResp = do
             , mtdc      = ReadWrite (mtdc.val) (mtdc <==)
             , mscratchc = ReadWrite (mscratchc.val) (mscratchc <==)
             , mepcc     = ReadWrite (mepcc.val) (mepcc <==)
+            , mccsr     = ReadWrite (mccsr.val) (mccsr <==)
             }
 
       -- Post-execute rules
@@ -578,25 +596,35 @@ makeCPUPipeline sim c instrResp = do
             .&. exc4_wire.val.inv
             .&. exc4_reg.val.inv
             .&. (delay 0 (exc4_wire.val.inv))) do
+        --display "stage 4 writing back"
         store regFileA rd (finalResultWire.val)
         store regFileB rd (finalResultWire.val)
         --display "instruction " (instr4.val) " wrote 0x" (finalResultWire.val) " to x" rd
-      --display "\n"
+      --display "\n                                                        1"
+      --display "jump_wire: " (jump_wire.val)
       --display "instructions in pipeline: "
-      --display "stage 1: " (instrData)
+      --display "stage 1 pc: " (pcc1.val.getOffset)
+      --        " insn: " (instrData)
       --        " exc1_reg: " (exc1_reg.val)
       --        " exc1_wire: " (exc1_wire.val)
-      --display "stage 2: " (instr2.val)
+      --        " go1: " (go1)
+      --display "stage 2 pc: " (pcc2.val.getOffset)
+      --        " insn: " (instr2.val)
       --        " exc2_reg: " (exc2_reg.val)
       --        " exc2_wire: " (exc2_wire.val)
-      --display "stage 3: " (instr3.val)
+      --        " go2: " (go2.val)
+      --display "stage 3 pc: " (pcc3.val.getOffset)
+      --        " insn: " (instr3.val)
       --        " exc3_reg: " (exc3_reg.val)
       --        " exc3_wire: " (exc3_wire.val)
-      --display "stage 4: " (instr4.val)
+      --        " go3: " (go3.val)
+      --display "stage 4 pc: " (pcc4.val.getOffset)
+      --        " insn: " (instr4.val)
       --        " exc4_reg: " (exc4_reg.val)
       --        " exc4_wire: " (exc4_wire.val)
+      --        " go4: " (go4.val)
       --display "stallWire: " (stallWire.val)
-      --display "\n"
+      --display "\n                                                        1"
 
 
       ----display "overwrite pc_wdata? ans: " (exc4_wire.val)
@@ -611,7 +639,7 @@ makeCPUPipeline sim c instrResp = do
                         , flush4 = exc4_wire.val
                         , go4 = rvfi4.val.rvfi_valid
                         }
-         ,RVFI_DII_InstrReq { rvfi_instrReqCap = pcc1.val
+         ,RVFI_DII_InstrReq { rvfi_instrReqCap = pcFetchWire.val
                             , rvfi_instrConsume = consume.val
                             }
          )

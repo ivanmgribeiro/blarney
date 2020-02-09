@@ -27,6 +27,7 @@ exc_instrPageFault          :: ExceptionCode = 12
 exc_loadPageFault           :: ExceptionCode = 13
 exc_res14                   :: ExceptionCode = 14
 exc_storeAMOPageFault       :: ExceptionCode = 15
+exc_CHERIException          :: ExceptionCode = 0x20
 
 type InterruptCode = Bit 31
 
@@ -57,9 +58,11 @@ trap s csr c = do
   csr.mcause <== toCause c
   -- TODO move this elsewhere
   -- TODO this overlooks the possibility of setting the address to something inexact
+  --display "################### regular trap #########"
+  --display "mcause: " (toCause c)
   s.pcc <== lower ((s.mtcc.val.setOffset) (s.mtcc.val.getOffset .&. 0xfffffffc))
   csr.mepc <== s.pc.val
-  --display "setting mepc to value " (s.pc.val)
   s.mepcc <== s.pcc.val
+  --display "setting mepc to value " (s.pc.val)
   --display "setting mepcc to value " (s.pcc.val)
   s.exc <== 1

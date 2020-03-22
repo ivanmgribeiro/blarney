@@ -12,8 +12,10 @@ type LogDataMemSize = 23
 
 -- memory base & size constants
 -- TODO make LogDataMemSize depend on these
-memBase = 0xC0000000
-memSize = 0x18BCB0
+--memBase = 0xC0000000
+--memSize = 0x18BCB0
+memBase = 0x80000000
+memSize = 0x10000
 
 -- Implement data memory as eight block RAMs
 -- (one for each byte of double word)
@@ -47,7 +49,8 @@ type MemIn = Wire MemReq
 -- TODO extend this to take in the memory base & size
 makeDataMemCore :: Bool -> Bool -> MemIn -> Module MemResp
 makeDataMemCore sim printStuff memIn = do
-  dataMem :: DataMem <- makeDataMemInit sim
+  --dataMem :: DataMem <- makeDataMemInit sim
+  dataMem :: DataMem <- makeDataMem sim
   tagMem :: TagMem <- makeRAM
 
   -- information about the pending request

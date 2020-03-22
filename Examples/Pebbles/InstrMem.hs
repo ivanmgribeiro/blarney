@@ -11,7 +11,7 @@ import DataMem
 import RVFI_DII
 
 -- Instruction memory size
-type InstrAddr = Bit 23
+type InstrAddr = Bit 16
 
 -- Instructions
 type Instr = Bit 32

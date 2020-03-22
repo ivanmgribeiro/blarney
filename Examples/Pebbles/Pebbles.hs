@@ -457,10 +457,12 @@ cSeal s csrUnit = do
   -- TODO make this 7 a constant elsewhere
   else if (at @7 (s.opBCap.getPerms)).inv then
     cheriTrap s csrUnit cheri_exc_permitSealViolation (0 # s.opBAddr)
-  else if s.opBCap.getAddr .<. s.opBCap.getBase then
+  else if (isInBounds (s.opBCap) 1).inv then
     cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
-  else if zeroExtend (s.opBCap.getAddr) .>=. s.opBCap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+  --else if s.opBCap.getAddr .<. s.opBCap.getBase then
+  --  cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+  --else if zeroExtend (s.opBCap.getAddr) .>=. s.opBCap.getTop then
+  --  cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   -- TODO this might be the wrong max OTYPE
   else if s.opBCap.getAddr .>=. 0xc then
     cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)

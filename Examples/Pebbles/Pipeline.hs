@@ -121,6 +121,9 @@ makeCPUPipeline sim c instrResp = do
   -- in case of a branch instruction
   pcNext :: Wire (Bit 93) <- makeWire dontCare
 
+  -- register that stores whether pc should change
+  pcChanged :: Reg (Bit 1) <- makeDReg 0
+
   -- Result of the execute stage
   resultWire :: Wire (Bit 93) <- makeWire dontCare
   postResultWire :: Wire (Bit 93) <- makeWire dontCare
@@ -257,7 +260,7 @@ makeCPUPipeline sim c instrResp = do
                       (pcNext.val,
                       (stallWire.val .|. instrResp.instrRespValid.inv) ?
                         (pcc1.val,
-                         lower ((pcc1.val.setOffset) ((pcc1.val.getOffset) + 4))))
+                         lower ((pcc1.val.inOffset) 4)))
 
       --display "pcfetch: " pcFetch
       --display "pc1: " (pc1.val)
@@ -281,6 +284,7 @@ makeCPUPipeline sim c instrResp = do
       when (instrResp.instrRespValid .&. instrResp.instrRespErr) do
         display "instruction check fail"
         pcNext <== mtcc.val
+        pcChanged <== 1
         mepcc <== pcc1.val
         mccsr <== 0x11
         --display "setting mepcc to " (pcc1.val)
@@ -448,6 +452,7 @@ makeCPUPipeline sim c instrResp = do
             , pc     = ReadWrite (pcc3.val.getOffset)
                                  (\x -> when (exc4_wire.val.inv) do
                                           pcNext <== lower ((pcc3.val.setOffset) x)
+                                          pcChanged <== 1
                                           jump_wire <== 1)
             , result = WriteOnly $ \x ->
                          when (dst c (instr3.val) .!=. 0) do
@@ -471,6 +476,7 @@ makeCPUPipeline sim c instrResp = do
             , pcc       = ReadWrite (pcc3.val)
                                     (\x -> do
                                        pcNext <== x
+                                       pcChanged <== 1
                                        jump_wire <== 1)
             , ddc       = ReadWrite (ddc.val) (ddc <==)
             , mtcc      = ReadWrite (mtcc.val) (mtcc <==)
@@ -535,6 +541,7 @@ makeCPUPipeline sim c instrResp = do
             --, pc     = ReadWrite (error "cant read pc in post-execute") (pcNext <==)
             , pc     = ReadWrite (pcc4.val.getOffset) (\x -> do
                                                          pcNext <== lower ((pcc4.val.setOffset) x)
+                                                         pcChanged <== 1
                                                          jump_wire <== 1)
             , resultCap = WriteOnly $ \x ->
                             when (dst c (instr4.val) .!=. 0) do
@@ -551,6 +558,7 @@ makeCPUPipeline sim c instrResp = do
             , pcc       = ReadWrite (pcc4.val)
                                     (\x -> do
                                        pcNext <== x
+                                       pcChanged <== 1
                                        jump_wire <== 1)
             , ddc       = ReadWrite (ddc.val) (error "cant write ddc")
             , mtcc      = ReadWrite (mtcc.val) (mtcc <==)

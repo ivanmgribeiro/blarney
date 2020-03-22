@@ -98,7 +98,8 @@ cheriTrap s csrUnit c reg = do
   csrUnit.mepc <== s.pc.val
   csrUnit.mcause <== toCause (Exception exc_CHERIException)
   --s.pc  <== csrUnit.mtvec.val
-  s.pcc <== lower ((s.mtcc.val.setOffset) (s.mtcc.val.getOffset .&. 0xfffffffc))
+  --s.pcc <== lower ((s.mtcc.val.setOffset) (s.mtcc.val.getOffset .&. 0xfffffffc))
+  s.pcc <== s.mtcc.val
   --display "setting mepc to value " (s.pc.val)
   --display "setting mepcc to value " (s.pcc.val)
   s.exc <== 1

@@ -53,7 +53,8 @@ makeInstrMem sim dii instrIn rvfi_dii_in = do
     return InstrResp {
       instrRespValue = rvfi_dii_in.insnInput.peek,
       instrRespValid = rvfi_dii_in.insnInput.canPeek,
-      instrRespErr = (cheriInstrChecks (instrIn.val.instrReqCap))
+      instrRespErr = cheriInstrChecks (delay 0 (instrIn.val.instrReqCap))
+      --instrRespErr = cheriInstrChecks (instrIn.val.instrReqCap)
     }
   else do
     memIn :: MemIn <- makeWire MemReq { memReqCap = 0

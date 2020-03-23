@@ -191,6 +191,7 @@ makeCPUPipeline sim c instrResp = do
 
   regCounter :: Reg (Bit 5) <- makeReg 0
   started :: Reg (Bit 1) <- makeReg 0
+  fetched :: Reg (Bit 1) <- makeReg 0
   goreg :: Reg (Bit 1) <- makeReg 1
 
   always do
@@ -209,7 +210,8 @@ makeCPUPipeline sim c instrResp = do
     
     when (regCounter.val .==. 31) do
       started <== 1
-      pcc1 <== lower ((almightyCap.setAddr) (0xBFFFFFFC))
+      --pcc1 <== lower ((almightyCap.setAddr) (0xBFFFFFFC))
+      pcc1 <== lower ((almightyCap.setAddr) (0x80000000))
       ddc <== almightyCap
       mepcc <== lower ((almightyCap.setAddr) (0x00000000))
       mtcc <== almightyCap
@@ -228,15 +230,16 @@ makeCPUPipeline sim c instrResp = do
       let instrData = instrResp.instrRespValue
 
       -- consume only when ready to receive an instruction
-      consume <== ((instrResp.instrRespValid)
+      consume <== (fetched.val)
+                  .&.((instrResp.instrRespValid)
                   .&. (stallWire.val.inv)
                   .&. (exc3_wire.val.inv)
                   .&. (exc4_wire.val.inv)
                   .&. (jump_wire.val.inv)
                   .&. (pcNext.active.inv .|. instrResp.instrRespErr))
 
-      --when (consume.val) do
-        --display "consumed instruction 0x" instrData
+      when (consume.val) do
+        display "consumed instruction 0x" instrData
 
       --when (consume.val.inv) do
         --display "not consuming"
@@ -255,7 +258,7 @@ makeCPUPipeline sim c instrResp = do
       -- select correct PC to fetch
       let pcFetch = pcNext.active ?
                       (pcNext.val,
-                      (stallWire.val .|. instrResp.instrRespValid.inv) ?
+                      (stallWire.val .|. instrResp.instrRespValid.inv .|. fetched.val.inv) ?
                         (pcc1.val,
                          lower ((pcc1.val.setOffset) ((pcc1.val.getOffset) + 4))))
 
@@ -269,17 +272,19 @@ makeCPUPipeline sim c instrResp = do
       -- TODO this needs to replace the let pcFetch above
       pcFetchWire <== pcFetch
       pcc1 <== pcFetch
+      fetched <== 1
 
       -- trigger stage 1 when instruction fetch has returned
       let go1 :: Bit 1 = instrResp.instrRespValid
                          .&. instrResp.instrRespErr.inv
+                         .&. fetched.val
 
       --display "pcc used for fetch: " pcFetch
       --display "cherichecks: " (cheriInstrChecks (pcFetch))
       --display "pc used for fetch: " (pcFetch.getOffset)
 
-      when (instrResp.instrRespValid .&. instrResp.instrRespErr) do
-        display "instruction check fail"
+      when (instrResp.instrRespValid .&. instrResp.instrRespErr .&. fetched.val) do
+        display "instruction check fail for addr" (pcFetchWire.val.old)
         pcNext <== mtcc.val
         mepcc <== pcc1.val
         mccsr <== 0x11
@@ -328,11 +333,14 @@ makeCPUPipeline sim c instrResp = do
       -- set RVFI register addresses
       -- unset rvfi_valid if the instruction is being stalled
       rvfi2 <== (rvfi1.val) {
-              rvfi_valid = instrResp.instrRespValid .&. exc2_wire.val.inv
-                                                    .&. exc3_wire.val.inv
-                                                    .&. exc4_wire.val.inv
-                                                    .&. stallWire.val.inv
-                                                    .&. jump_wire.val.inv,
+              rvfi_valid = fetched.val .&. (fetched.val)
+                                       .&. (instrResp.instrRespValid)
+                                       .&. (exc2_wire.val.inv)
+                                       .&. (exc3_wire.val.inv)
+                                       .&. (exc4_wire.val.inv)
+                                       .&. (stallWire.val.inv)
+                                       .&. (jump_wire.val.inv)
+                                       .&. (fetched.val),
               rvfi_insn = instrData,
               rvfi_rs1_addr = (srcA c (instrData)),
               rvfi_rs2_addr = (srcB c (instrData)),
@@ -485,12 +493,12 @@ makeCPUPipeline sim c instrResp = do
       -- the previous cycle when setting go3)
       when (go3.val .&. exc4_wire.val.inv .&. exc3_reg.val.inv) do
         --display "stage 3 executing"
-        matchDefault (instr3.val) (execRules c state) (noAction) --(do exc3_wire <== 1
-                                                      --    pcNext <== mtcc.val
-                                                      --    mepcc <== pcc3.val
-                                                      --    jump_wire <== 1
-                                                      --    --display "unknown instruction"
-                                                      --)
+        matchDefault (instr3.val) (execRules c state) (do exc3_wire <== 1 --(noAction)
+                                                          pcNext <== mtcc.val
+                                                          mepcc <== pcc3.val
+                                                          jump_wire <== 1
+                                                          --display "unknown instruction"
+                                                      )
         --match (instr3.val) (execRules c state)
         -- set RVFI mem info here or in the instruction definitions?
 
@@ -589,6 +597,7 @@ makeCPUPipeline sim c instrResp = do
                                                     pcNext.val.getOffset
                                                   else
                                                     rvfi4.val.rvfi_pc_wdata
+                                , rvfi_rd_addr = if finalResultWire.active then rd else 0
                                 }
 
       -- Writeback
@@ -627,11 +636,13 @@ makeCPUPipeline sim c instrResp = do
       --display "\n                                                        1"
 
 
-      ----display "overwrite pc_wdata? ans: " (exc4_wire.val)
+      ------display "overwrite pc_wdata? ans: " (exc4_wire.val)
+      --display "fetched: " (fetched.val)
       --display "rvfi1: " (rvfi1.val)
       --display "rvfi2: " (rvfi2.val)
       --display "rvfi3: " (rvfi3.val)
       --display "rvfi4: " (rvfi4.val)
+      --display "rvfifinal: " (rvfifinal.val)
       --display "\n"
 
   return (RVFI_DII_Data { rvfi_data = rvfifinal.val

@@ -1,4 +1,4 @@
-include *.mk
+#include *.mk
 
 different:
 	verilator --cc Pebbles.v -I../cheri-cap-lib -y $(BLARNEY_ROOT)/Verilog --exe Pebbles.cpp

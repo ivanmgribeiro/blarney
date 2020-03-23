@@ -12,8 +12,10 @@ type LogDataMemSize = 23
 
 -- memory base & size constants
 -- TODO make LogDataMemSize depend on these
-memBase = 0xC0000000
-memSize = 0x18BCB0
+--memBase = 0xC0000000
+--memSize = 0x18BCB0
+memBase = 0x80000000
+memSize = 0x10000
 
 -- Implement data memory as eight block RAMs
 -- (one for each byte of double word)
@@ -112,8 +114,8 @@ makeDataMemCore sim printStuff memIn = do
          .&. (memIn.val.memReqAddr .<=. memBase + memSize - size)
          .&. (isUnaligned.inv)
          .&. (cheriLoadChecks (memIn.val.memReqCap)
-                                  (memIn.val.memReqAddr)
-                                  (memIn.val.memReqWidth) .==. 0)) then do
+                              (memIn.val.memReqAddr)
+                              (memIn.val.memReqWidth) .==. 0)) then do
         dataMemRead dataMem (memIn.val.memReqAddr)
         when (isDoubleAccess (memIn.val.memReqWidth)) do
           let tagMemAddr = lower (upper (memIn.val.memReqAddr) :: Bit 29)
@@ -336,7 +338,6 @@ dataMemRead dataMem addr =
 -- of ddc? can this make it inexact?)
 cheriLoadChecks :: Bit 93 -> Bit 32 -> AccessWidth -> Bit 5
 cheriLoadChecks cap addr width =
-
   if (cap.isValidCap.inv) then
     0x02
   else if (cap.isSealed) then

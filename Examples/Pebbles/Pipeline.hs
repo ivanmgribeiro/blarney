@@ -66,6 +66,7 @@ data State =
   , stall :: WriteOnly (Bit 1)
     -- special-cased SCRs
     -- TODO look into moving these into their own RAM (or adding to CSR RAM?)
+  , pcc_delay :: WriteOnly (Bit 93)
   , pcc :: ReadWrite (Bit 93)
   , ddc :: ReadWrite (Bit 93)
   , mtcc :: ReadWrite (Bit 93)
@@ -145,6 +146,8 @@ makeCPUPipeline sim c instrResp = do
   pcc1 :: Reg (Bit 93) <- makeReg dontCare
   pcc2 :: Reg (Bit 93) <- makeReg dontCare
   pcc3 :: Reg (Bit 93) <- makeReg dontCare
+  pcc3_delay :: Reg (Bit 93) <- makeReg dontCare
+  pcc3_write :: Reg (Bit 1) <- makeDReg 0
   pcc4 :: Reg (Bit 93) <- makeReg dontCare
 
   -- Capability SCRs
@@ -285,7 +288,7 @@ makeCPUPipeline sim c instrResp = do
 
       when (instrResp.instrRespValid .&. instrResp.instrRespErr .&. fetched.val) do
         display "instruction check fail for addr" (pcFetchWire.val.old)
-        pcNext <== mtcc.val
+        pcNext <== lower ((mtcc.val.setOffset) (mtcc.val.getOffset .&.  0xfffffffc))
         mepcc <== pcc1.val
         mccsr <== 0x11
         --display "setting mepcc to " (pcc1.val)
@@ -384,6 +387,7 @@ makeCPUPipeline sim c instrResp = do
             , exc       = WriteOnly (exc2_wire <==)
             , stall     = error "no stalling available in stage 2"
             -- TODO what happens if i set the pcc to something that is unrepresentable
+            , pcc_delay = WriteOnly (error "cant write pcc_delay in stage 2")
             , pcc       = ReadWrite (pcc2.val) (error "cant write pcc")
             , ddc       = ReadWrite (ddc.val) (error "cant write ddc")
             , mtcc      = ReadWrite (mtcc.val) (mtcc <==)
@@ -476,6 +480,9 @@ makeCPUPipeline sim c instrResp = do
             , late   = error "Cant write late signal in execute"
             , exc    = WriteOnly (exc3_wire <==)
             , stall  = WriteOnly (\x -> (goreg <== x.inv))
+            , pcc_delay = WriteOnly (\x -> do
+                                       pcc3_write <== 1
+                                       pcc3_delay <== x)
             , pcc       = ReadWrite (pcc3.val)
                                     (\x -> do
                                        pcNext <== x
@@ -556,6 +563,7 @@ makeCPUPipeline sim c instrResp = do
             , late   = error "Can't write late signal in post-execute"
             , exc    = WriteOnly (exc4_wire <==)
             , stall  = error "can't stall in writeback stage"
+            , pcc_delay = WriteOnly (error "can't write pcc_delay in stage 4")
             , pcc       = ReadWrite (pcc4.val)
                                     (\x -> do
                                        pcNext <== x
@@ -568,9 +576,15 @@ makeCPUPipeline sim c instrResp = do
             , mccsr     = ReadWrite (mccsr.val) (mccsr <==)
             }
 
+      -- deal with delayed pcc setting
+
       -- Post-execute rules
       when (go4.val .&. exc4_reg.val.inv) do
         match (instr4.val) (postExecRules c state)
+        when (go3.val.old .&. pcc3_write.val) do
+          exc4_wire <== 1
+          pcNext <== pcc3_delay.val
+          jump_wire <== 1
 
       -- Determine final result destination
       let rd = if (isCCall (instr4.val)) then 31
@@ -609,7 +623,7 @@ makeCPUPipeline sim c instrResp = do
         store regFileA rd (finalResultWire.val)
         store regFileB rd (finalResultWire.val)
         --display "instruction " (instr4.val) " wrote 0x" (finalResultWire.val) " to x" rd
-      --display "\n                                                        1"
+      --display "\n"
       --display "jump_wire: " (jump_wire.val)
       --display "instructions in pipeline: "
       --display "stage 1 pc: " (pcc1.val.getOffset)
@@ -633,7 +647,7 @@ makeCPUPipeline sim c instrResp = do
       --        " exc4_wire: " (exc4_wire.val)
       --        " go4: " (go4.val)
       --display "stallWire: " (stallWire.val)
-      --display "\n                                                        1"
+      --display "\n"
 
 
       ------display "overwrite pc_wdata? ans: " (exc4_wire.val)

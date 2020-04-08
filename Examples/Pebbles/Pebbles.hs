@@ -137,7 +137,7 @@ jumpWrap s csrUnit jumpInstr = do
                                  let postOffset = (s.pcc.val.setOffset) x
                                  if (at @93 postOffset).inv then
                                    -- TODO it might not always be operand A
-                                   cheriTrap s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
+                                   cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
                                  else 
                                    s.pc <== x)
   }
@@ -259,7 +259,7 @@ cMemRead_2 s memResp csrUnit unsigned width = do
       s.result <== resSigned
   else
     -- TODO set the cause and address of this exception properly
-    cheriTrap s csrUnit (cheri_exc_permitLoadViolation) (0 # s.opAAddr)
+    cheriTrap False s csrUnit (cheri_exc_permitLoadViolation) (0 # s.opAAddr)
 
 
 --memWrite_old :: State -> DataMem -> CSRUnit -> Bit 12 -> Bit 2 -> Action ()
@@ -313,7 +313,7 @@ cMemWrite_2 s memResp csrUnit = do
   --display "cMemWrite_2"
   when (memResp.memRespErr) do
     -- TODO set the cause and address of this exception properly
-    cheriTrap s csrUnit (cheri_exc_permitStoreViolation) (0 # s.opAAddr)
+    cheriTrap False s csrUnit (cheri_exc_permitStoreViolation) (0 # s.opAAddr)
 
 --cMemWrite_2 :: State -> MemIn -> CSRUnit -> Bit 3 -> Bit 1 -> Action ()
 --cMemWrite s memIn csrUnit width ddcRelative
@@ -447,23 +447,23 @@ cSeal s csrUnit = do
   --display "cSeal"
   let newCap = (s.opACap.setType) (lower (s.opBCap.getAddr))
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opBCap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opBAddr)
   else if s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opBCap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opBAddr)
   -- TODO make this 7 a constant elsewhere
   else if (at @7 (s.opBCap.getPerms)).inv then
-    cheriTrap s csrUnit cheri_exc_permitSealViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_permitSealViolation (0 # s.opBAddr)
   else if s.opBCap.getAddr .<. s.opBCap.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   else if zeroExtend (s.opBCap.getAddr) .>=. s.opBCap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   -- TODO this might be the wrong max OTYPE
   else if s.opBCap.getAddr .>=. 0xc then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   -- TODO RVBS and the sail definitions have a representability check here
   -- does this need it as well? the wrapper only has 93 bits
   else
@@ -475,22 +475,22 @@ cUnseal         :: State -> CSRUnit -> Action ()
 cUnseal s csrUnit = do
   --display "cUnseal"
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opBCap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opBAddr)
   else if s.opACap.isSealed.inv then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opBCap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opBAddr)
   else if s.opBCap.getAddr .!=. zeroExtend (s.opACap.getType) then
-    cheriTrap s csrUnit cheri_exc_typeViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_typeViolation (0 # s.opBAddr)
   -- TODO replace this with a constant
   else if (at @10 (s.opBCap.getPerms)).inv then
-    cheriTrap s csrUnit cheri_exc_unsealViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_unsealViolation (0 # s.opBAddr)
   else if s.opBCap.getAddr .<. s.opBCap.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   else if zeroExtend (s.opBCap.getAddr) .>=. s.opBCap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   else do
     let newCap = slice @92 @0 ((s.opACap.setType) (-1))
     let oldPerms = newCap.getPerms
@@ -503,9 +503,9 @@ cAndPerm        :: State -> CSRUnit -> Action ()
 cAndPerm s csrUnit = do
   --display "cAndPerm"
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else
     s.resultCap <== (s.opACap.setPerms) (s.opACap.getPerms .&. lower (s.opB))
 
@@ -513,7 +513,7 @@ cSetFlags       :: State -> CSRUnit -> Action ()
 cSetFlags s csrUnit = do
   --display "cSetFlags"
   if s.opACap.isValidCap .&. s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else
     s.resultCap <== (s.opACap.setFlags) (lower (s.opB))
 
@@ -521,7 +521,7 @@ cSetOffset      :: State -> CSRUnit -> Action ()
 cSetOffset s csrUnit = do
   --display "cSetOffset"
   if s.opACap.isValidCap .&. s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else do
     let res = (s.opACap.setOffset) (s.opB)
     s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opACap.getBase + s.opB)
@@ -530,7 +530,7 @@ cSetAddr        :: State -> CSRUnit -> Action ()
 cSetAddr s csrUnit = do
   --display "cSetAddr"
   if s.opACap.isValidCap .&. s.opACap.isSealed then do
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else do
     let res = (s.opACap.setAddr) (s.opB)
     s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opB)
@@ -539,7 +539,7 @@ cIncOffset      :: State -> CSRUnit -> Action ()
 cIncOffset s csrUnit = do
   --display "cIncOffset"
   if s.opACap.isValidCap .&. s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else do
     let res = (s.opACap.setOffset) (s.opACap.getOffset + s.opB)
     s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opACap.getAddr + s.opB)
@@ -549,7 +549,7 @@ cIncOffsetImm   :: State -> CSRUnit -> Bit 12 -> Action ()
 cIncOffsetImm s csrUnit imm = do
   --display "cIncOffsetImm"
   if s.opACap.isValidCap .&. s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else do
     let res = (s.opACap.setOffset) (s.opACap.getOffset + signExtend imm)
     s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opACap.getAddr + signExtend imm)
@@ -559,13 +559,13 @@ cSetBounds      :: State -> CSRUnit -> Action ()
 cSetBounds s csrUnit = do
   --display "cSetBounds"
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opACap.getAddr .<. s.opACap.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if zeroExtend (s.opACap.getAddr) + zeroExtend (s.opB) .>. s.opACap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else
     s.resultCap <== lower ((s.opACap.setBounds) (s.opB))
 
@@ -574,16 +574,16 @@ cSetBoundsExact s csrUnit = do
   --display "cSetBoundsExact"
   let newCap = (s.opACap.setBounds) (s.opB)
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opACap.getAddr .<. s.opACap.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if zeroExtend (s.opACap.getAddr) + zeroExtend (s.opB) .>. s.opACap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if inv (at @93 newCap) then
     -- TODO check if this if should be inverted
-    cheriTrap s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
   else
     s.resultCap <== lower (newCap)
 
@@ -592,13 +592,13 @@ cSetBoundsImm s csrUnit imm = do
   --display "cSetBoundsImm"
   let newCap = (s.opACap.setBounds) (zeroExtend imm)
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opACap.getAddr .<. s.opACap.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if zeroExtend (s.opACap.getAddr) + zeroExtend imm .>. s.opACap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else
     s.resultCap <== lower (newCap)
 
@@ -615,17 +615,17 @@ cBuildCap s csrUnit = do
   --display "input cap b: " (s.opBCap)
   --display "valid: " (aDDC.isValidCap)
   if (aDDC.isValidCap).inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if aDDC.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opBCap.getBase .<. aDDC.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if s.opBCap.getTop .>. aDDC.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if zeroExtend (s.opBCap.getBase) .>. s.opBCap.getTop  then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   else if (aDDC.getPerms .&. s.opBCap.getPerms) .!=. s.opBCap.getPerms then
-    cheriTrap s csrUnit cheri_exc_softDefPermViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_softDefPermViolation (0 # s.opAAddr)
   else do
     -- TODO check this implementation
     -- it seems all 4 sources disagree - ibex, sail, rvbs, piccolo
@@ -638,14 +638,14 @@ cCopyType       :: State -> CSRUnit -> Action ()
 cCopyType s csrUnit = do
   --display "cCopyType"
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opBCap.isSealed then
     if zeroExtend (s.opBCap.getType) .<. s.opACap.getBase then
-      cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+      cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
     else if zeroExtend (s.opBCap.getType) .>=. s.opACap.getTop then
-      cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+      cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
     else
       s.resultCap <== lower ((s.opACap.setOffset) (zeroExtend (zeroExtend (s.opBCap.getType) - (s.opACap.getBase))))
   else
@@ -656,24 +656,24 @@ cCSeal s csrUnit = do
   --display "cCSeal"
   let newCap = (s.opACap.setType) (lower (s.opBCap.getAddr))
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opBCap.isValidCap.inv then
     s.resultCap <== s.opACap
   else if s.opBCap.getAddr .==. -1 then
     s.resultCap <== s.opACap
   else if s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opBCap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opBAddr)
   -- TODO make this 7 a constant elsewhere
   else if (at @7 (s.opBCap.getPerms)).inv then
-    cheriTrap s csrUnit cheri_exc_permitSealViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_permitSealViolation (0 # s.opBAddr)
   else if s.opBCap.getAddr .<. s.opBCap.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   else if zeroExtend (s.opBCap.getAddr) .>=. s.opBCap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   else if s.opBCap.getAddr .>=. 0xc then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opBAddr)
   -- TODO RVBS and the sail definitions have a representability check here
   -- does this need it as well? the wrapper only has 93 bits
   else
@@ -685,9 +685,9 @@ cToPtr s csrUnit = do
   --display "cToPtr"
   let bDDC = if s.opBAddr .==. 0 then s.ddc.val else s.opBCap
   if bDDC.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opBAddr)
   else if s.opACap.isValidCap .&. s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else
     s.result <== if s.opACap.isValidCap.inv then 0 else (s.opACap.getAddr - bDDC.getBase)
 
@@ -699,9 +699,9 @@ cFromPtr s csrUnit = do
   if s.opB .==. 0 then
     s.resultCap <== nullCap
   else if aDDC.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if aDDC.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else do
     let res = (aDDC.setOffset) (s.opB)
     -- TODO replace 93 with a constant
@@ -729,20 +729,20 @@ cMove s = do
 cJALR :: State -> CSRUnit -> Action ()
 cJALR s csrUnit = do
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opACap.isSealed then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   -- TODO replace this with a constant
   else if (at @1 (s.opACap.getPerms)).inv then
-    cheriTrap s csrUnit cheri_exc_permitExecuteViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_permitExecuteViolation (0 # s.opAAddr)
   else if s.opACap.getAddr .<. s.opACap.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if zeroExtend (s.opACap.getAddr + 4) .>. s.opACap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else do
     let res = (s.pcc.val.setOffset) (s.pcc.val.getOffset + 4)
     if (at @93 res).inv then
-      cheriTrap s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
+      cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
     else do
       s.resultCap <== lower res
       s.pcc <== lower ((s.opACap.setOffset) (slice @31 @1 (s.opACap.getOffset) # 0))
@@ -754,32 +754,32 @@ cCall s csrUnit = do
   --display "cCall"
   let newPC = s.opACap.getAddr
   if s.opACap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else if s.opBCap.isValidCap.inv then
-    cheriTrap s csrUnit cheri_exc_tagViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opBAddr)
   else if s.opACap.isSealed.inv then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opBCap.isSealed.inv then
-    cheriTrap s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else if s.opACap.getType .!=. s.opBCap.getType then
-    cheriTrap s csrUnit cheri_exc_typeViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_typeViolation (0 # s.opAAddr)
   -- TODO replace these with constants
   else if (at @8 (s.opACap.getPerms)).inv then
-    cheriTrap s csrUnit cheri_exc_permitCCallViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_permitCCallViolation (0 # s.opAAddr)
   else if (at @8 (s.opBCap.getPerms)).inv then
-    cheriTrap s csrUnit cheri_exc_permitCCallViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_permitCCallViolation (0 # s.opBAddr)
   else if (at @1 (s.opACap.getPerms)).inv then
-    cheriTrap s csrUnit cheri_exc_permitExecuteViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_permitExecuteViolation (0 # s.opAAddr)
   else if at @1 (s.opBCap.getPerms) then
-    cheriTrap s csrUnit cheri_exc_permitExecuteViolation (0 # s.opBAddr)
+    cheriTrap True s csrUnit cheri_exc_permitExecuteViolation (0 # s.opBAddr)
   else if newPC .<. s.opACap.getBase then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if zeroExtend (newPC + 4) .>. s.opACap.getTop then
-    cheriTrap s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else do
     let res = (((s.opACap.setType) (-1)).setOffset) ((slice @31 @1 (s.opACap.getOffset)) # 0)
     if (at @93 res).inv then
-      cheriTrap s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
+      cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
     else do
       s.resultCap <== (s.opBCap.setType) (-1)
       s.pcc <== lower res
@@ -808,7 +808,7 @@ cSpecialRW s csrUnit id = do
   if id .==. 0 then -- PCC
     if s.opAAddr .!=. 0 then
       -- trying to write to pcc with csprw - illegal
-      cheriTrap s csrUnit cheri_exc_accessSysRegsViolation (1 # id)
+      cheriTrap True s csrUnit cheri_exc_accessSysRegsViolation (1 # id)
     else
       s.resultCap <== s.pcc.val
   else if id .==. 1 then do -- DDC
@@ -817,7 +817,7 @@ cSpecialRW s csrUnit id = do
       s.ddc <== s.opACap
   -- TODO replace this @10 with a constant somewhere
   else if (at @10 (s.pcc.val.getPerms)).inv then
-    cheriTrap s csrUnit cheri_exc_accessSysRegsViolation (1 # id)
+    cheriTrap True s csrUnit cheri_exc_accessSysRegsViolation (1 # id)
   -- MTCC
   else if id .==. 28 then do
       s.resultCap <== s.mtcc.val
@@ -828,8 +828,11 @@ cSpecialRW s csrUnit id = do
         else do
           -- TODO ask about this. can this ever make mtcc non-exact?
           -- and if so, what do we do?
-          s.mtcc <== lower ((s.opACap.setOffset) ((slice @31 @2 (s.opACap.getOffset)) # 0))
-          csrUnit.mtvec <== (slice @31 @2 (s.opACap.getOffset)) # 0
+          let offset = s.opACap.getOffset
+          s.mtcc <== lower ((s.opACap.setOffset) ((slice @31 @2 offset) # 0))
+          csrUnit.mtvec <== slice @31 @2 offset # 0
+          --s.mtcc <== s.opACap
+          --csrUnit.mtvec <== s.opACap.getOffset
         -- TODO mtvec should probably be written elsewhere
   -- MTDC
   else if id .==. 29 then do
@@ -864,7 +867,7 @@ cSpecialRW s csrUnit id = do
   else do
     --display "tried to write to a SCR that doesn't exist"
     trap s csrUnit (Exception exc_illegalInstr)
-    --cheriTrap s csrUnit cheri_exc_setCIDViolation (1 # id)
+    --cheriTrap True s csrUnit cheri_exc_setCIDViolation (1 # id)
 
 mul :: State -> Action ()
 mul s = do

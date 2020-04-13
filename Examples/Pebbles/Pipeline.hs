@@ -263,7 +263,8 @@ makeCPUPipeline sim c instrResp = do
                       (pcNext.val,
                       (stallWire.val .|. instrResp.instrRespValid.inv .|. fetched.val.inv) ?
                         (pcc1.val,
-                         lower ((pcc1.val.setOffset) ((pcc1.val.getOffset) + 4))))
+                         --lower ((pcc1.val.setOffset) ((pcc1.val.getOffset) + 4))))
+                         lower ((pcc1.val.inOffset) 4)))
 
       --display "pcfetch: " pcFetch
       --display "pc1: " (pc1.val)

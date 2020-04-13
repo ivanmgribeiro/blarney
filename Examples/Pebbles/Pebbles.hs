@@ -541,7 +541,7 @@ cIncOffset s csrUnit = do
   if s.opACap.isValidCap .&. s.opACap.isSealed then
     cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else do
-    let res = (s.opACap.setOffset) (s.opACap.getOffset + s.opB)
+    let res = (s.opACap.inOffset) (s.opB)
     s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opACap.getAddr + s.opB)
 
 
@@ -551,7 +551,7 @@ cIncOffsetImm s csrUnit imm = do
   if s.opACap.isValidCap .&. s.opACap.isSealed then
     cheriTrap True s csrUnit cheri_exc_sealViolation (0 # s.opAAddr)
   else do
-    let res = (s.opACap.setOffset) (s.opACap.getOffset + signExtend imm)
+    let res = (s.opACap.inOffset) (signExtend imm)
     s.resultCap <== if at @93 res then lower res else nullWithAddr (s.opACap.getAddr + signExtend imm)
 
 
@@ -740,7 +740,7 @@ cJALR s csrUnit = do
   else if zeroExtend (s.opACap.getAddr + 4) .>. s.opACap.getTop then
     cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else do
-    let res = (s.pcc.val.setOffset) (s.pcc.val.getOffset + 4)
+    let res = (s.pcc.val.inOffset) 4
     if (at @93 res).inv then
       cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
     else do

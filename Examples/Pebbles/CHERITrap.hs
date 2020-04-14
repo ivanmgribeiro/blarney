@@ -103,6 +103,7 @@ cheriTrap delay s csrUnit c reg =
     --display "setting mepc to value " (s.pc.val)
     --display "setting mepcc to value " (s.pcc.val)
     --s.exc <== 1
+    s.exc_delay <== 1
   else do
     -- TODO write register number as well
     display "CHERI TRAP CALLED @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"

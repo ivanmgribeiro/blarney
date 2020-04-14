@@ -60,6 +60,7 @@ data State =
     -- Keep track of whether we've encountered an exception
     -- TODO rename to trap in order to align with RVFI naming?
   , exc :: WriteOnly (Bit 1)
+  , exc_delay :: WriteOnly (Bit 1)
     -- Stall wire
     -- for now, this just stalls the entire pipeline (ie everything stops)
     -- TODO implement this in a tidier way
@@ -168,6 +169,7 @@ makeCPUPipeline sim c instrResp = do
   exc2_reg  :: Reg (Bit 1) <- makeReg 0
   exc3_wire :: Wire (Bit 1) <- makeWire 0
   exc3_reg  :: Reg (Bit 1) <- makeReg 0
+  exc3_delay :: Reg (Bit 1) <- makeDReg 0
   exc4_wire :: Wire (Bit 1) <- makeWire 0
   exc4_reg  :: Reg (Bit 1) <- makeReg 0
 
@@ -386,6 +388,7 @@ makeCPUPipeline sim c instrResp = do
             , resultCap = error "Can't write resultCap in pre-execute"
             , late      = WriteOnly (lateWire <==)
             , exc       = WriteOnly (exc2_wire <==)
+            , exc_delay = error "cant delay exception in stage 4"
             , stall     = error "no stalling available in stage 2"
             -- TODO what happens if i set the pcc to something that is unrepresentable
             , pcc_delay = WriteOnly (error "cant write pcc_delay in stage 2")
@@ -460,8 +463,10 @@ makeCPUPipeline sim c instrResp = do
             , opBAddr   = (c.srcB) (instr3.val)
             , pc     = ReadWrite (pcc3.val.getOffset)
                                  (\x -> when (exc4_wire.val.inv) do
-                                          pcNext <== lower ((pcc3.val.setOffset) x)
-                                          jump_wire <== 1)
+                                          --pcNext <== lower ((pcc3.val.setOffset) x)
+                                          --jump_wire <== 1)
+                                          pcc3_delay <== lower ((pcc3.val.setOffset) x)
+                                          pcc3_write <== 1)
             , result = WriteOnly $ \x ->
                          when (dst c (instr3.val) .!=. 0) do
                            resultWire <== nullWithAddr x
@@ -480,6 +485,7 @@ makeCPUPipeline sim c instrResp = do
                               --        " length: " (x.getLength)
             , late   = error "Cant write late signal in execute"
             , exc    = WriteOnly (exc3_wire <==)
+            , exc_delay = WriteOnly (exc3_delay <==)
             , stall  = WriteOnly (\x -> (goreg <== x.inv))
             , pcc_delay = WriteOnly (\x -> do
                                        pcc3_write <== 1
@@ -499,7 +505,7 @@ makeCPUPipeline sim c instrResp = do
       -- Execute rules
       -- TODO might not have to check exc3_reg (since it would be taken into account
       -- the previous cycle when setting go3)
-      when (go3.val .&. exc4_wire.val.inv .&. exc3_reg.val.inv) do
+      when (go3.val .&. exc4_wire.val.inv .&. exc3_reg.val.inv .&. pcc3_write.val.inv) do
         --display "stage 3 executing"
         matchDefault (instr3.val) (execRules c state) (do exc3_wire <== 1 --(noAction)
                                                           pcNext <== mtcc.val
@@ -518,6 +524,7 @@ makeCPUPipeline sim c instrResp = do
         go4 <== exc4_wire.val.inv
                 .&. exc3_wire.val.inv
                 .&. exc3_reg.val.inv
+                .&. pcc3_write.val.inv
 
       --display "overwrite pc_wdata? ans: " (pcNext.active)
       --display "rvfi3: " (rvfi3.val)
@@ -525,7 +532,7 @@ makeCPUPipeline sim c instrResp = do
 
       -- set RVFI register values
       rvfi4 <== (rvfi3.val) {
-          rvfi_valid = rvfi3.val.rvfi_valid .&. exc4_wire.val.inv,
+          rvfi_valid = rvfi3.val.rvfi_valid .&. exc4_wire.val.inv .&. pcc3_write.val.inv,
           rvfi_rs1_data = regA.val.getAddr,
           rvfi_rs2_data = regB.val.getAddr,
           rvfi_pc_wdata = if exc3_wire.val .|. jump_wire.val then
@@ -563,6 +570,7 @@ makeCPUPipeline sim c instrResp = do
                            --display "in stage 4"
             , late   = error "Can't write late signal in post-execute"
             , exc    = WriteOnly (exc4_wire <==)
+            , exc_delay = error "cant delay exception in stage 4"
             , stall  = error "can't stall in writeback stage"
             , pcc_delay = WriteOnly (error "can't write pcc_delay in stage 4")
             , pcc       = ReadWrite (pcc4.val)
@@ -583,7 +591,7 @@ makeCPUPipeline sim c instrResp = do
       when (go4.val .&. exc4_reg.val.inv) do
         match (instr4.val) (postExecRules c state)
         when (go3.val.old .&. pcc3_write.val) do
-          exc4_wire <== 1
+          exc4_wire <== exc3_delay.val
           pcNext <== pcc3_delay.val
           jump_wire <== 1
 
@@ -608,7 +616,7 @@ makeCPUPipeline sim c instrResp = do
       rvfifinal <== (rvfi4.val) { rvfi_valid = rvfi4.val.rvfi_valid
                                 , rvfi_rd_wdata = (getAddr rvfiRes)
                                 , rvfi_trap = (exc4_wire.val .|. exc4_reg.val)
-                                , rvfi_pc_wdata = if (exc4_wire.val) then
+                                , rvfi_pc_wdata = if (exc4_wire.val .|. pcc3_write.val) then
                                                     pcNext.val.getOffset
                                                   else
                                                     rvfi4.val.rvfi_pc_wdata
@@ -619,7 +627,8 @@ makeCPUPipeline sim c instrResp = do
       when ((finalResultWire.active)
             .&. exc4_wire.val.inv
             .&. exc4_reg.val.inv
-            .&. (delay 0 (exc4_wire.val.inv))) do
+            .&. (delay 0 (exc4_wire.val.inv))
+            .&. (go4.val)) do
         --display "stage 4 writing back"
         store regFileA rd (finalResultWire.val)
         store regFileB rd (finalResultWire.val)
@@ -662,7 +671,7 @@ makeCPUPipeline sim c instrResp = do
 
   return (RVFI_DII_Data { rvfi_data = rvfifinal.val
                         , flush = exc3_wire.val .|. jump_wire.val
-                        , flush4 = exc4_wire.val
+                        , flush4 = exc4_wire.val .|. pcc3_write.val
                         , go4 = rvfi4.val.rvfi_valid
                         }
          ,RVFI_DII_InstrReq { rvfi_instrReqCap = pcFetchWire.val

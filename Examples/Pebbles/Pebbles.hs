@@ -745,7 +745,7 @@ cJALR s csrUnit = do
       cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
     else do
       s.resultCap <== lower res
-      s.pcc <== lower ((s.opACap.setOffset) (slice @31 @1 (s.opACap.getOffset) # 0))
+      s.pcc_delay <== lower ((s.opACap.setOffset) (slice @31 @1 (s.opACap.getOffset) # 0))
 
 -- TODO check that target address is aligned properly
 -- (can't have 2-byte aligned instructions)
@@ -782,7 +782,7 @@ cCall s csrUnit = do
       cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
     else do
       s.resultCap <== (s.opBCap.setType) (-1)
-      s.pcc <== lower res
+      s.pcc_delay <== lower res
 
 cTestSubset :: State -> Action ()
 cTestSubset s = do

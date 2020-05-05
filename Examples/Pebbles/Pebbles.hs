@@ -137,7 +137,7 @@ jumpWrap s csrUnit jumpInstr = do
                                  let postOffset = (s.pcc.val.setOffset) x
                                  if (at @93 postOffset).inv then
                                    -- TODO it might not always be operand A
-                                   cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
+                                   cheriTrap False s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
                                  else 
                                    s.pc <== x)
   }
@@ -219,7 +219,7 @@ memRead_2_wrap uartIn memIn s resp csrUnit imm unsigned width = do
     s.result <== zeroExtend (uartIn.canPeek)
   else if memIn.val.old.memReqAddr .==. 0xC01DF02D then do
     s.result <== zeroExtend (uartIn.peek)
-    display "value in core: " (uartIn.peek)
+    --display "value in core: %c" (uartIn.peek)
     uartIn.consume
   else
     memRead_2 s resp csrUnit imm unsigned width
@@ -583,7 +583,7 @@ cSetBoundsExact s csrUnit = do
     cheriTrap True s csrUnit cheri_exc_lengthViolation (0 # s.opAAddr)
   else if inv (at @93 newCap) then
     -- TODO check if this if should be inverted
-    cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
+    cheriTrap True s csrUnit cheri_exc_tagViolation (0 # s.opAAddr)
   else
     s.resultCap <== lower (newCap)
 
@@ -745,7 +745,7 @@ cJALR s csrUnit = do
       cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
     else do
       s.resultCap <== lower res
-      s.pcc_delay <== lower ((s.opACap.setOffset) (slice @31 @1 (s.opACap.getOffset) # 0))
+      s.pcc <== lower ((s.opACap.setOffset) (slice @31 @1 (s.opACap.getOffset) # 0))
 
 -- TODO check that target address is aligned properly
 -- (can't have 2-byte aligned instructions)
@@ -782,7 +782,7 @@ cCall s csrUnit = do
       cheriTrap True s csrUnit cheri_exc_representabilityViolation (0 # s.opAAddr)
     else do
       s.resultCap <== (s.opBCap.setType) (-1)
-      s.pcc_delay <== lower res
+      s.pcc <== lower res
 
 cTestSubset :: State -> Action ()
 cTestSubset s = do
@@ -871,7 +871,14 @@ cSpecialRW s csrUnit id = do
 
 mul :: State -> Action ()
 mul s = do
-  s.result <== s.opA .*. s.opB
+  s.result <== lower (s.opA .*. s.opB)
+
+mulh :: State -> Action ()
+mulh s = do
+  s.result <== upper (s.opA .*. s.opB)
+
+
+
 --
 --mul_1 :: State -> Action ()
 --mul_1 s = do
@@ -960,6 +967,9 @@ makePebbles sim dii dii_in = do
         , "csr<12> imm<5> 110 <5> 1110011" ==> csrrsi s csrUnit
         , "csr<12> imm<5> 111 <5> 1110011" ==> csrrci s csrUnit
         , "0000001 <5> <5> 000 <5> 0110011" ==> mul s
+        --, "0000001 <5> <5> 001 <5> 0110011" ==> mulh s
+        --, "0000001 <5> <5> 010 <5> 0110011" ==> mulh s
+        --, "0000001 <5> <5> 011 <5> 0110011" ==> mulh s
         ]
 
   let cheriExecute s = (execute s) ++

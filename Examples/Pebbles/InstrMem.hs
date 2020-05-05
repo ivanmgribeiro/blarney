@@ -74,7 +74,7 @@ makeInstrMem sim dii instrIn rvfi_dii_in = do
         --display "there shouldn't be an instruction next cycle"
         writePending <== 1
         valid <== 0
-        --display "writing to instr mem " (instrIn.val.old.instrWriteAddr)
+        --display "writing to instr mem " (instrIn.val.instrWriteAddr)
         let memReq = MemReq {
           memReqCap = instrIn.val.instrWriteCap,
           memReqAddr = instrIn.val.instrWriteAddr,

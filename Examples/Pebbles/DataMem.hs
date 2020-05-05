@@ -12,10 +12,10 @@ type LogDataMemSize = 23
 
 -- memory base & size constants
 -- TODO make LogDataMemSize depend on these
---memBase = 0xC0000000
---memSize = 0x18BCB0
-memBase = 0x80000000
-memSize = 0x10000
+memBase = 0xC0000000
+memSize = 0x18BCB0
+--memBase = 0x80000000
+--memSize = 0x10000
 
 -- Implement data memory as eight block RAMs
 -- (one for each byte of double word)
@@ -146,6 +146,7 @@ makeDataMemCore sim printStuff memIn = do
     when (readPending.val) do
       if (readPendingAddr.val .==. 0xC01DF01D) then do
         --display "reading c01df01d"
+        --finish
         responseData <== 0x0
         responseTag <== 0
       else do
@@ -181,6 +182,9 @@ makeDataMemCore sim printStuff memIn = do
           let tagMemAddr = lower (upper (memIn.val.memReqAddr) :: Bit 29)
           store tagMem tagMemAddr (memIn.val.memReqTag)
         --display "write succeeded " (memIn.val)
+          --when ((memIn.val.memReqAddr .>=. 0xc0034000) .|. (memIn.val.memReqAddr .<=. 0xc0034100)) do
+            --display "wrote instructions"
+
       else do
         --display "errored write, memchecks: " (cheriStoreChecks (memIn.val.memReqCap)
         --                                                       (memIn.val.memReqAddr)
